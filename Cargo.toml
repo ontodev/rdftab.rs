@@ -1,0 +1,14 @@
+[package]
+name = "rdftab"
+version = "0.1.0"
+authors = ["James A. Overton <james@overton.ca>"]
+edition = "2018"
+
+[dependencies]
+csv = "1.1"
+rusqlite = "0.23.1"
+rio_api = "0.4.2"
+rio_xml = "0.4.2"
+
+[patch.crates-io]
+rio_xml = { git = "https://github.com/ontodev/rio", branch = "master" }
