@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Update
+      run: sudo apt-get update
     - name: Install sqlite3 dev files
       run: sudo apt-get install libsqlite3-dev
     - name: Build
