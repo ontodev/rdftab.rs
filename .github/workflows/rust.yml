@@ -18,13 +18,21 @@ jobs:
     - uses: actions/checkout@v2
     - name: Update
       run: sudo apt-get update
-    - name: Install sqlite3 dev files
-      run: sudo apt-get install libsqlite3-dev
-    - name: Build
-      run: cargo build --verbose --release && cp target/release/rdftab rdftab-x86_64-unknown-linux-gnu
+    - name: Install dev packages
+      run: sudo apt-get install libsqlite3-dev musl-tools
+    - name: Install latest rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-unknown-linux-musl
+        default: true
+        override: true
     - name: Run tests
       run: cargo test --verbose
+    - name: Build
+      run: cargo build --verbose --release && cp target/release/rdftab rdftab-x86_64-unknown-linux-musl
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v2
       with:
-        path: rdftab-x86_64-unknown-linux-gnu
+        name: rdftab-x86_64-unknown-linux-musl
+        path: rdftab-x86_64-unknown-linux-musl
