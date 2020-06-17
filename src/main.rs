@@ -1,5 +1,6 @@
 // Based on https://docs.rs/csv/1.1.3/csv/tutorial/index.html
 use std::error::Error;
+use std::env;
 use std::io;
 use std::process;
 
@@ -31,22 +32,16 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
             return iri.replace(&prefix.base, format!("{}:", prefix.prefix).as_str());
         }
     }
-    //println!("No prefix found for IRI <{}>", iri);
     return format!("<{}>", iri);
 }
 
-fn test() -> Result<(), Box<dyn Error>> {
+fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let stanza_end = NamedOrBlankNode::from(NamedNode { iri: "http://example.com/stanza-end" }).into();
     let annotated_source = NamedNode { iri: "http://www.w3.org/2002/07/owl#annotatedSource" };
     let stdin = io::stdin();
     let mut stack: Vec<Vec<Option<String>>> = Vec::new();
     let mut stanza = String::from("");
-    //let mut wtr = csv::WriterBuilder::new()
-    //    .delimiter(b'\t')
-    //    .from_writer(io::stdout());
-    //wtr.serialize(vec!["stanza", "subject", "predicate", "object", "value", "datatype", "language"])
-    //    .expect("Everything to work");
-    let mut conn = Connection::open("test.db")?;
+    let mut conn = Connection::open(db)?;
     let prefixes = get_prefixes(&mut conn).expect("Get prefixes");
     let tx = conn.transaction()?;
     tx.execute("CREATE TABLE IF NOT EXISTS statements (
@@ -58,7 +53,8 @@ fn test() -> Result<(), Box<dyn Error>> {
       datatype TEXT,
       language TEXT
     )", params![])?;
-    RdfXmlParser::new(stdin.lock(), "file:foo.rdf").unwrap().parse_all(&mut |t| {
+    let filename = format!("file:{}", db);
+    RdfXmlParser::new(stdin.lock(), filename.as_str()).unwrap().parse_all(&mut |t| {
         if t.subject == stanza_end {
             while stack.len() > 0 {
                 if let Some(s) = stack.pop() {
@@ -69,7 +65,6 @@ fn test() -> Result<(), Box<dyn Error>> {
                     }
                     let mut v = vec![Some(stanza.to_string())];
                     v.extend_from_slice(&s);
-                    //wtr.serialize(v).expect("Everything to work");
                     let mut stmt = tx.prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6, ?7)").expect("Statement ok");
                     stmt.execute(v).expect("Insert row");
                 }
@@ -105,13 +100,18 @@ fn test() -> Result<(), Box<dyn Error>> {
         }
         Ok(()) as Result<(), RdfXmlError>
     }).unwrap();
-    //wtr.flush()?;
     tx.commit()?;
     Ok(())
 }
 
 fn main() {
-    if let Err(err) = test() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Usage: rdftab target.db");
+        process::exit(1);
+    }
+    let db = &args[1];
+    if let Err(err) = insert(db) {
         println!("{}", err);
         process::exit(1);
     }
