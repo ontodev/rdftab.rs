@@ -9,8 +9,9 @@ This is an early prototype that reads an RDF file and inserts the triples into a
 4. query your database with SQLite
 
 ```
-$ curl -L -o rdftab https://github.com/ontodev/rdftab.rs/releases/download/v0.1.0/rdftab-x86_64-apple-darwin
+$ curl -L -o rdftab https://github.com/ontodev/rdftab.rs/releases/download/v0.1.1/rdftab-x86_64-apple-darwin
 $ chmod +x rdftab
+$ sqlite3 example.db < src/prefixes.sql
 $ ./rdftab example.db < example.rdf
 $ sqlite3 example.db
 > select * from statements limit 3;
