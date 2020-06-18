@@ -235,6 +235,23 @@ where each child element of the root element is a tree
 specifying a particular subject,
 and various nested anonymous structures are encoded in the XML tree structure.
 
+```xml
+<owl:Class rdf:about="http://example.com/foo">
+  <rdfs:label>Foo</rdfs:label>
+  <rdfs:label xml:lang="fr">Fou</rdfs:label>
+  <ex:size rdf:datatype="http://www.w3.org/2001/XMLSchema#int">123</ex:size>
+  <ex:link rdf:resource="http://exaple.com/foo"/>
+  <rdfs:subClassOf>
+    <owl:Restriction>
+      <owl:onProperty rdf:resource="http://example.com/part-of"/>
+      <owl:someValuesFrom rdf:resource="http://example.com/bar"/>
+    </owl:Restriction>
+  </rdfs:subClassOf>
+</owl:Class>
+```
+
+
+
 To encode stanza information in the `statements` table,
 `rdftab` uses a [slightly modified version](https://github.com/ontodev/rio)
 of [`rio`](https://github.com/oxigraph/rio)
