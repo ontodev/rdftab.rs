@@ -5,9 +5,12 @@ authors = ["James A. Overton <james@overton.ca>"]
 edition = "2018"
 
 [dependencies]
-rusqlite = "0.23.1"
 rio_api = "0.4.2"
 rio_xml = "0.4.2"
+
+[dependencies.rusqlite]
+version = "0.23.1"
+features = ["bundled"]
 
 [patch.crates-io]
 rio_xml = { git = "https://github.com/ontodev/rio", branch = "master" }
