@@ -13,7 +13,7 @@ INSERT OR IGNORE INTO prefix VALUES
 ("dct", "http://purl.org/dc/terms/"),
 ("foaf", "http://xmlns.com/foaf/0.1/"),
 ("protege", "http://protege.stanford.edu/plugins/owl/protege#"),
-("ex", "http://example.com"),
+("ex", "http://example.com/"),
 
 ("BFO",       "http://purl.obolibrary.org/obo/BFO_"),
 ("CHEBI",     "http://purl.obolibrary.org/obo/CHEBI_"),

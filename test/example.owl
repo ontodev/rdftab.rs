@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://example.com/#"
+     xml:base="http://example.com/"
+     xmlns:obo="http://purl.obolibrary.org/obo/"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+  <owl:Class rdf:about="http://example.com/foo">
+    <rdfs:label>Foo</rdfs:label>
+    <rdfs:label xml:lang="fr">Fou</rdfs:label>
+    <ex:size rdf:datatype="http://www.w3.org/2001/XMLSchema#int">123</ex:size>
+    <ex:link rdf:resource="http://exaple.com/foo"/>
+    <rdfs:subClassOf>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="http://example.com/part-of"/>
+        <owl:someValuesFrom rdf:resource="http://example.com/bar"/>
+      </owl:Restriction>
+    </rdfs:subClassOf>
+  </owl:Class>
+</rdf:RDF>

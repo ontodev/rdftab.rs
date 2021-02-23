@@ -31,8 +31,8 @@ using as little memory as possible.
 ```
 $ curl -L -o rdftab https://github.com/ontodev/rdftab.rs/releases/download/v0.1.1/rdftab-x86_64-apple-darwin
 $ chmod +x rdftab
-$ sqlite3 example.db < src/prefix.sql
-$ ./rdftab example.db < example.rdf
+$ sqlite3 example.db < test/prefix.sql
+$ ./rdftab example.db < test/example.owl
 $ sqlite3 example.db
 > select * from statements limit 3;
 ```
@@ -240,7 +240,7 @@ and various nested anonymous structures are encoded in the XML tree structure.
   <rdfs:label>Foo</rdfs:label>
   <rdfs:label xml:lang="fr">Fou</rdfs:label>
   <ex:size rdf:datatype="http://www.w3.org/2001/XMLSchema#int">123</ex:size>
-  <ex:link rdf:resource="http://exaple.com/foo"/>
+  <ex:link rdf:resource="http://example.com/foo"/>
   <rdfs:subClassOf>
     <owl:Restriction>
       <owl:onProperty rdf:resource="http://example.com/part-of"/>
@@ -250,7 +250,7 @@ and various nested anonymous structures are encoded in the XML tree structure.
 </owl:Class>
 ```
 
-
+(See [example.owl](test/examle.owl).)
 
 To encode stanza information in the `statements` table,
 `rdftab` uses a [slightly modified version](https://github.com/ontodev/rio)
