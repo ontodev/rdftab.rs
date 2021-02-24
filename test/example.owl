@@ -11,7 +11,7 @@
     <rdfs:label>Foo</rdfs:label>
     <rdfs:label xml:lang="fr">Fou</rdfs:label>
     <ex:size rdf:datatype="http://www.w3.org/2001/XMLSchema#int">123</ex:size>
-    <ex:link rdf:resource="http://exaple.com/foo"/>
+    <ex:link rdf:resource="http://example.com/foo"/>
     <rdfs:subClassOf>
       <owl:Restriction>
         <owl:onProperty rdf:resource="http://example.com/part-of"/>
