@@ -9,6 +9,8 @@ SELECT
   "@prefix " || prefix || ": <" || base || "> ."
 FROM prefix
 UNION ALL
+SELECT ""
+UNION ALL
 SELECT 
    subject
 || " "
