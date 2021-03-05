@@ -9,7 +9,7 @@ SHEET_TSVS = $(foreach o,$(SHEETS),build/$(o).tsv)
 ROBOT := java -jar bin/robot.jar
 
 .PHONY: all
-all: build/thin.rdf
+all: build/roundtrip-thin.diff
 
 .PHONY: clean
 clean:
@@ -79,3 +79,24 @@ build/thin.owl: build/thin.ttl | bin/robot.jar
 build/thin.rdf: build/thin.ttl
 	rapper -i turtle -o rdfxml-abbrev $< > $@
 
+target/release/rdftab: src/main.rs
+	cargo build --release
+
+build/roundtrip-thin.db: target/release/rdftab build/prefix.sql build/thin.rdf
+	rm -f $@
+	sqlite3 $@ < $(word 2,$^)
+	$< $@ < $(word 3,$^)
+
+build/roundtrip-thin.tsv: build/roundtrip-thin.db
+	sqlite3 $< ".mode tabs" ".header on" "select * from statements" \
+	| sed s/_:riog0000000./_:b/g \
+	| sort \
+	> $@
+
+build/sorted-thin.tsv: build/thin.tsv
+	sed s/_:b./_:b/g $< \
+	| sort \
+	> $@
+
+build/roundtrip-thin.diff: build/sorted-thin.tsv build/roundtrip-thin.tsv
+	diff $^
