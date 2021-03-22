@@ -44,7 +44,7 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
 fn render_owl_restriction(
     stanza_rows: &Vec<Vec<Option<String>>>,
     given_rows: Vec<&Vec<Option<String>>>,
-) -> HashMap<String, String> {
+) -> HashMap<String, Vec<HashMap<String, String>>> {
     // TODO: It would be good to somehow refactor all of these function calls. Everything except
     // for the closure is the same.
     let target_row = {
@@ -62,18 +62,18 @@ fn render_owl_restriction(
             v
         }
     };
-    //let property_row = {
-    //    if let Some(property_row) = given_rows
-    //        .iter()
-    //        .find(|r| r[1] == Some(String::from("owl:onProperty")))
-    //        .map(|&r| r.clone())
-    //    {
-    //        property_row
-    //    } else {
-    //        let v = vec![];
-    //        v
-    //    }
-    //};
+    let property_row = {
+        if let Some(property_row) = given_rows
+            .iter()
+            .find(|r| r[1] == Some(String::from("owl:onProperty")))
+            .map(|&r| r.clone())
+        {
+            property_row
+        } else {
+            let v = vec![];
+            v
+        }
+    };
     let rdf_type_row = {
         if let Some(rdf_type_row) = given_rows
             .iter()
@@ -123,6 +123,12 @@ fn render_owl_restriction(
     );
 
     let mut restriction = HashMap::new();
+    restriction.insert(String::from("rdf:type"),
+                       {
+                           let mut tmp_map = HashMap::new();
+                           tmp_map.insert(String::from("object"), rdf_type);
+                           vec![tmp_map]
+                       });
     if target_obj.starts_with("_:") {
         let inner_rows: Vec<_> = stanza_rows
             .iter()
@@ -133,19 +139,31 @@ fn render_owl_restriction(
             Ok(ce) => ce,
             Err(_) => String::from(""),
         };
-        restriction.insert(String::from("object"), ce);
-        return restriction;
+        restriction.insert(String::from("object"),
+                           {
+                               let mut tmp_map = HashMap::new();
+                               tmp_map.insert(String::from("object"), ce);
+                               vec![tmp_map]
+                           });
+        //eprintln!("vvvvvvvvvvvvvvvvvv {:?} vvvvvvvvvvvvvvvv", restriction);
+        //if 1 == 1 { process::exit(1); }
     } else {
-        let mut literal = HashMap::new();
-        literal.insert(String::from("object"), target_obj);
-        return literal;
+        restriction.insert(String::from("object"),
+                           {
+                               let mut tmp_map = HashMap::new();
+                               tmp_map.insert(String::from("object"), target_obj);
+                               vec![tmp_map]
+                           });
+        //eprintln!("llllllllllllllllll {:?} llllllllllllllll", restriction);
+        //if 1 == 1 { process::exit(1); }
     }
+    return restriction;
 }
 
 fn get_owl_operands(
     stanza_rows: &Vec<Vec<Option<String>>>,
     given_row: &Vec<Option<String>>,
-) -> Vec<HashMap<String, String>> {
+) -> Vec<HashMap<String, Vec<HashMap<String, String>>>> {
     let given_pred = {
         if let Some(given_pred) = given_row.get(1).and_then(|r| r.clone()) {
             given_pred
@@ -166,16 +184,23 @@ fn get_owl_operands(
     if !given_obj.starts_with("_:") {
         eprintln!("Found non-blank operand: {}", given_obj);
         let mut non_blank = HashMap::new();
-        non_blank.insert(String::from("object"), given_obj);
+        non_blank.insert(String::from("object"),
+                         {
+                             let mut tmp_map = HashMap::new();
+                             tmp_map.insert(String::from("object"), given_obj);
+                             vec![tmp_map]
+                         });
         return vec![non_blank];
     }
 
-    let inner_rows: Vec<_> = stanza_rows
-        .iter()
-        .filter(move |&r| r[0].as_ref() == Some(&given_obj))
-        .collect();
+    let inner_rows: Vec<_> = {
+        stanza_rows
+            .iter()
+            .filter(|r| r[0] == Some(given_obj.clone()))
+            .collect()
+    };
 
-    let mut operands = Vec::new();
+    let mut operands = vec![];
     for inner_row in inner_rows.iter() {
         let inner_subj = {
             if let Some(inner_subj) = inner_row.get(0).and_then(|r| r.clone()) {
@@ -207,6 +232,8 @@ fn get_owl_operands(
         if inner_pred == "rdf:type" {
             if inner_obj == "owl:Restriction" {
                 let operand = render_owl_restriction(stanza_rows, inner_rows);
+                //eprintln!("<<<<<<<<<<< {:?} >>>>>>>>>>>", operand);
+                //if 1 == 1 { process::exit(1); }
                 operands.push(operand);
                 break;
             } else if inner_obj == "owl:Class" {
@@ -216,7 +243,12 @@ fn get_owl_operands(
                     Err(_) => String::from(""),
                 };
                 let mut operand = HashMap::new();
-                operand.insert(String::from("object"), ce);
+                operand.insert(String::from("object"),
+                               {
+                                   let mut tmp_map = HashMap::new();
+                                   tmp_map.insert(String::from("object"), ce);
+                                   vec![tmp_map]
+                               });
                 operands.push(operand);
                 break;
             }
@@ -239,11 +271,19 @@ fn get_owl_operands(
             } else {
                 eprintln!("Rendering non-blank object with predicate: {}", inner_pred);
                 let mut operand = HashMap::new();
-                operand.insert(String::from("object"), inner_obj);
+                operand.insert(String::from("object"),
+                               {
+                                   let mut tmp_map = HashMap::new();
+                                   tmp_map.insert(String::from("object"), inner_obj);
+                                   vec![tmp_map]
+                               });
                 operands.push(operand);
             }
         }
     }
+
+    eprintln!("********************* {:?} ****************", operands);
+    //if 1 == 1 { process::exit(1); }
 
     return operands;
 }
@@ -251,19 +291,7 @@ fn get_owl_operands(
 fn render_owl_class_expression(
     stanza_rows: &Vec<Vec<Option<String>>>,
     given_rows: Vec<&Vec<Option<String>>>,
-) -> HashMap<String, Vec<HashMap<String, String>>> {
-    let rdf_type_row = {
-        if let Some(rdf_type_row) = given_rows
-            .iter()
-            .find(|r| r[1] == Some(String::from("rdf:type")))
-            .map(|&r| r.clone())
-        {
-            rdf_type_row
-        } else {
-            let v = vec![];
-            v
-        }
-    };
+) -> HashMap<String, Vec<HashMap<String, Vec<HashMap<String, String>>>>> {
     let class_row = {
         if let Some(class_row) = given_rows
             .iter()
@@ -280,27 +308,45 @@ fn render_owl_class_expression(
         }
     };
 
-    eprintln!("Found rows: {:?}, {:?}", rdf_type_row, class_row);
+    let rdf_type_rows: Vec<_> = {
+        given_rows
+            .iter()
+            .filter(|r| r[1] == Some(String::from("rdf:type")))
+            .collect()
+    };
 
-    let rdf_type_pred = {
-        if let Some(rdf_type_pred) = rdf_type_row.get(1).and_then(|r| r.clone()) {
-            rdf_type_pred
-        } else {
-            String::from("")
-        }
+    eprintln!("Found rows: {:?}, {:?}", rdf_type_rows, class_row);
+
+    let rdf_type_objs: Vec<_> = {
+        rdf_type_rows
+            .iter()
+            .map(|r| r[2].clone())
+            .map(|c| {
+                if let Some(obj) = c {
+                    obj
+                } else {
+                    String::from("")
+                }
+            })
+            .collect()
     };
-    let rdf_type_obj = {
-        if let Some(rdf_type_obj) = rdf_type_row.get(2).and_then(|r| r.clone()) {
-            rdf_type_obj
-        } else {
-            String::from("")
-        }
-    };
+
+    let mut rdf_part = vec![];
+    for obj in rdf_type_objs.iter() {
+        let mut obj_map = HashMap::new();
+        obj_map.insert(String::from("object"), obj.clone());
+        rdf_part.push(obj_map);
+    }
 
     let mut ce = HashMap::new();
-    let mut rdf_part = HashMap::new();
-    rdf_part.insert(String::from("object"), rdf_type_obj);
-    ce.insert(rdf_type_pred, vec![rdf_part]);
+    ce.insert(String::from("rdf:type"),
+              {
+                  let mut tmp_map = HashMap::new();
+                  tmp_map.insert(String::from("object"), rdf_part);
+                  vec![tmp_map]
+              });
+
+    let operands = get_owl_operands(stanza_rows, &class_row);
 
     let class_subj = {
         if let Some(class_subj) = class_row.get(0).and_then(|r| r.clone()) {
@@ -324,8 +370,6 @@ fn render_owl_class_expression(
         }
     };
 
-    let operands = get_owl_operands(stanza_rows, &class_row);
-
     eprintln!(
         "Rendering <s,p,o> = <{}, {}, {}>",
         class_subj, class_pred, class_obj
@@ -346,10 +390,21 @@ fn render_owl_class_expression(
             vec![render_owl_restriction(stanza_rows, given_rows)],
         );
     } else if class_obj.starts_with("<") {
-        let mut class_obj_map = HashMap::new();
-        class_obj_map.insert(String::from("object"), class_obj);
-        ce.insert(class_pred, vec![class_obj_map]);
+        ce.insert(class_pred,
+                  {
+                      let mut tmp_map = HashMap::new();
+                      tmp_map.insert(String::from("object"),
+                                     {
+                                         let mut tmp_map = HashMap::new();
+                                         tmp_map.insert(String::from("object"), class_obj);
+                                         vec![tmp_map]
+                                     });
+                      vec![tmp_map]
+                  });
     }
+
+    eprintln!("..................... {:?} ...................", ce);
+    if 1 == 1 { process::exit(1); }
 
     return ce;
 }
@@ -516,6 +571,8 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     )?;
     let filename = format!("file:{}", db);
     RdfXmlParser::new(stdin.lock(), filename.as_str())
+        // TODO: Check with James if it would be better to replace the call to unwrap() with a
+        // more robust error handling mechanism.
         .unwrap()
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
@@ -578,6 +635,8 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
             }
             Ok(()) as Result<(), RdfXmlError>
         })
+        // TODO: Check with James if it would be better to replace the call to unwrap() with a
+        // more robust error handling mechanism.
         .unwrap();
     tx.commit()?;
     Ok(())
