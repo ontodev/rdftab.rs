@@ -31,7 +31,8 @@ report: build/report.txt
 build/report.txt: build/prefix.sql build/thin.rdf target/debug/rdftab
 	rm -f build/thick.db
 	sqlite3 build/thick.db < build/prefix.sql
-	rdftab build/thick.db < obi-tree-OBI-0000666.rdf
+	rdftab build/thick.db < build/thin.rdf
+#	rdftab build/thick.db < obi-tree-OBI-0000666.rdf
 #	rdftab build/thick.db < obi-tree-OBI-0000793.rdf
 #	rdftab build/thick.db < obi-tree-OBI-0000793-predicates.rdf
 #	rdftab build/thick.db < obi-tree-OBI-0100046.rdf

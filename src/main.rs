@@ -14,21 +14,10 @@ use rio_xml::{RdfXmlError, RdfXmlParser};
 
 use rusqlite::{params, Connection, Result};
 
-// TODO: After the current iteration, which is a pared-down version of `tree.py` from gizmos,
-// look at https://github.com/ontodev/gizmos/pull/77 and try implementing that logic (or parts of
-// it) instead. That logic begins by constructing a subject map as a first step, and then uses it
-// to construct the predicate map in the second step.
-
 #[derive(Debug)]
 struct Prefix {
     prefix: String,
     base: String,
-}
-
-#[derive(Serialize, Debug)]
-enum RDFObject {
-    Nested(Vec<HashMap<String, RDFObject>>),
-    Flat(String),
 }
 
 fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
@@ -53,502 +42,218 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
     return format!("<{}>", iri);
 }
 
-fn render_owl_restriction(
-    stanza_rows: &Vec<Vec<Option<String>>>, given_rows: Vec<&Vec<Option<String>>>,
-) -> HashMap<String, RDFObject> {
-    // TODO: It would be good to somehow refactor all of these function calls. Everything except
-    // for the closure is the same.
-    let target_row = {
-        if let Some(target_row) = given_rows
-            .iter()
-            .find(|r| {
-                (r[1] != Some(String::from("rdf:type")))
-                    && (r[1] != Some(String::from("owl:onProperty")))
-            })
-            .map(|&r| r.clone())
-        {
-            target_row
+fn thinify(
+    stanza_stack: &mut Vec<Vec<Option<String>>>, stanza_name: &mut String,
+) -> Vec<Vec<Option<String>>> {
+    let mut rows = vec![];
+    for s in stanza_stack.iter() {
+        if stanza_name == "" {
+            if let Some(ref sb) = s[1] {
+                *stanza_name = sb.clone();
+                //eprintln!("Changing stanza name to {}", stanza_name);
+            }
         }
-        else {
-            let v = vec![];
-            v
-        }
-    };
-    let property_row = {
-        if let Some(property_row) = given_rows
-            .iter()
-            .find(|r| r[1] == Some(String::from("owl:onProperty")))
-            .map(|&r| r.clone())
-        {
-            property_row
-        }
-        else {
-            let v = vec![];
-            v
-        }
-    };
-    let rdf_type_row = {
-        if let Some(rdf_type_row) = given_rows
-            .iter()
-            .find(|r| r[1] == Some(String::from("rdf:type")))
-            .map(|&r| r.clone())
-        {
-            rdf_type_row
-        }
-        else {
-            let v = vec![];
-            v
-        }
-    };
-    let rdf_type = {
-        if let Some(rdf_type) = rdf_type_row.get(2).and_then(|r| r.clone()) {
-            rdf_type
-        }
-        else {
-            String::from("")
-        }
-    };
-
-    if rdf_type != "owl:Restriction" {
-        eprintln!(
-            "ERROR Unexpected rdf type: '{}' found in OWL restriction",
-            rdf_type
-        );
-        return HashMap::new();
+        let mut v = vec![Some(stanza_name.to_string())];
+        v.extend_from_slice(&s);
+        rows.push(v);
     }
+    return rows;
+}
 
-    let target_pred = {
-        if let Some(target_pred) = target_row.get(1).and_then(|r| r.clone()) {
-            target_pred
+fn row2object_map(row: Vec<Option<String>>) -> HashMap<String, String> {
+    let object = {
+        if let Some(object) = row.get(3).and_then(|r| r.clone()) {
+            object
         }
         else {
             String::from("")
         }
     };
-    let target_obj = {
-        if let Some(target_obj) = target_row.get(2).and_then(|r| r.clone()) {
-            target_obj
+    let value = {
+        if let Some(value) = row.get(4).and_then(|r| r.clone()) {
+            value
+        }
+        else {
+            String::from("")
+        }
+    };
+    let datatype = {
+        if let Some(datatype) = row.get(5).and_then(|r| r.clone()) {
+            datatype
+        }
+        else {
+            String::from("")
+        }
+    };
+    let language = {
+        if let Some(language) = row.get(6).and_then(|r| r.clone()) {
+            language
         }
         else {
             String::from("")
         }
     };
 
-    eprintln!(
-        "Rendering OWL restriction for {} for object {}",
-        target_pred, target_obj
-    );
-
-    let mut restriction = HashMap::new();
-    restriction.insert(String::from("object"), {
-        let mut tmp_map = HashMap::new();
-        tmp_map.insert(String::from("object"), RDFObject::Flat(rdf_type));
-        RDFObject::Nested(vec![tmp_map])
-    });
-
-    if target_obj.starts_with("_:") {
-        let inner_rows: Vec<_> = stanza_rows
-            .iter()
-            .filter(move |&r| r[0].as_ref() == Some(&target_obj))
-            .collect();
-        let ce = render_owl_class_expression(stanza_rows, inner_rows);
-        let ce = match to_string(&ce) {
-            Ok(ce) => ce,
-            Err(_) => String::from(""),
-        };
-        restriction.insert(String::from("object"), {
-            let mut tmp_map = HashMap::new();
-            tmp_map.insert(String::from("object"), RDFObject::Flat(ce));
-            RDFObject::Nested(vec![tmp_map])
-        });
-        //eprintln!("vvvvvvvvvvvvvvvvvv {:?} vvvvvvvvvvvvvvvv", restriction);
-        //if 1 == 1 { process::exit(1); }
+    let mut object_map = HashMap::new();
+    if object != "" {
+        object_map.insert(String::from("object"), object);
+        return object_map;
+    }
+    else if value != "" {
+        object_map.insert(String::from("value"), value);
+        if datatype != "" {
+            object_map.insert(String::from("datatype"), datatype);
+        }
+        else if language != "" {
+            object_map.insert(String::from("language"), language);
+        }
+        return object_map;
     }
     else {
-        restriction.insert(String::from("object"), {
-            let mut tmp_map = HashMap::new();
-            tmp_map.insert(String::from("object"), RDFObject::Flat(target_obj));
-            RDFObject::Nested(vec![tmp_map])
-        });
-        //eprintln!("llllllllllllllllll {:?} llllllllllllllll", restriction);
-        //if 1 == 1 { process::exit(1); }
+        // TODO: The python code throws an exception here. Should we do something similar?
+        eprintln!("ERROR: Invalid RDF row");
+        return HashMap::new().clone();
     }
-    return restriction;
 }
 
-fn get_owl_operands(
-    stanza_rows: &Vec<Vec<Option<String>>>, given_row: &Vec<Option<String>>,
-) -> RDFObject {
-    let given_pred = {
-        if let Some(given_pred) = given_row.get(1).and_then(|r| r.clone()) {
-            given_pred
-        }
-        else {
-            String::from("")
-        }
-    };
-    let given_obj = {
-        if let Some(given_obj) = given_row.get(2).and_then(|r| r.clone()) {
-            given_obj
-        }
-        else {
-            String::from("")
-        }
-    };
-
-    eprintln!("Finding operands for row with predicate: {}", given_pred);
-
-    if !given_obj.starts_with("_:") {
-        eprintln!("Found non-blank operand: {}", given_obj);
-
-        let mut non_blank = HashMap::new();
-        non_blank.insert(String::from("object"), {
-            let mut tmp_map = HashMap::new();
-            tmp_map.insert(String::from("object"), RDFObject::Flat(given_obj));
-            RDFObject::Nested(vec![tmp_map])
-        });
-        let non_blank: RDFObject = RDFObject::Nested(vec![non_blank]);
-        return non_blank;
-    }
-
-    let inner_rows: Vec<_> = {
-        stanza_rows
-            .iter()
-            .filter(|r| r[0] == Some(given_obj.clone()))
-            .collect()
-    };
-
-    let mut operands = vec![];
-    for inner_row in inner_rows.iter() {
-        let inner_subj = {
-            if let Some(inner_subj) = inner_row.get(0).and_then(|r| r.clone()) {
-                inner_subj
-            }
-            else {
-                String::from("")
-            }
-        };
-        let inner_pred = {
-            if let Some(inner_pred) = inner_row.get(1).and_then(|r| r.clone()) {
-                inner_pred
-            }
-            else {
-                String::from("")
-            }
-        };
-        let inner_obj = {
-            if let Some(inner_obj) = inner_row.get(2).and_then(|r| r.clone()) {
-                inner_obj
-            }
-            else {
-                String::from("")
-            }
-        };
-
-        eprintln!(
-            "Found row with <s,p,o> = <{}, {}, {}>",
-            inner_subj, inner_pred, inner_obj
-        );
-
-        if inner_pred == "rdf:type" {
-            if inner_obj == "owl:Restriction" {
-                let operand = render_owl_restriction(stanza_rows, inner_rows);
-                //eprintln!("<<<<<<<<<<< {:?} >>>>>>>>>>>", operand);
-                //if 1 == 1 { process::exit(1); }
-                operands.push(operand);
-                break;
-            }
-            else if inner_obj == "owl:Class" {
-                let ce = render_owl_class_expression(stanza_rows, inner_rows);
-                let ce = match to_string(&ce) {
-                    Ok(ce) => ce,
-                    Err(_) => String::from(""),
-                };
-                let mut operand: HashMap<String, RDFObject> = HashMap::new();
-                operand.insert(String::from("object"), {
-                    let mut tmp_map = HashMap::new();
-                    tmp_map.insert(String::from("object"), RDFObject::Flat(ce));
-                    RDFObject::Nested(vec![tmp_map])
-                });
-                operands.push(operand);
-                break;
-            }
-        }
-        else if inner_pred == "rdf:rest" {
-            if inner_obj != "rdf:nil" {
-                let inner_operands = get_owl_operands(stanza_rows, inner_row);
-                operands.push({
-                    let mut tmp_map = HashMap::new();
-                    tmp_map.insert(inner_pred.clone(), inner_operands);
-                    tmp_map
-                });
-            }
-            eprintln!("Returned from recursing on {}", inner_pred);
-        }
-        else if inner_pred == "rdf:first" {
-            if inner_obj.starts_with("_:") {
-                eprintln!("{} points to a blank node, following the trail", inner_pred);
-                let inner_operands = get_owl_operands(stanza_rows, inner_row);
-                operands.push({
-                    let mut tmp_map = HashMap::new();
-                    tmp_map.insert(inner_pred.clone(), inner_operands);
-                    tmp_map
-                });
-                eprintln!("Returned from recursing on {}", inner_pred);
-            }
-            else {
-                eprintln!("Rendering non-blank object with predicate: {}", inner_pred);
-                let mut operand = HashMap::new();
-                operand.insert(inner_pred.clone(), {
-                    let mut tmp_map = HashMap::new();
-                    tmp_map.insert(String::from("object"), RDFObject::Flat(inner_obj));
-                    RDFObject::Nested(vec![tmp_map])
-                });
-                operands.push(operand);
-            }
+fn thin2subjects(
+    thin_rows: &Vec<Vec<Option<String>>>,
+) -> HashMap<String, HashMap<String, Vec<HashMap<String, String>>>> {
+    let mut subject_ids = vec![];
+    for row in thin_rows.iter() {
+        let subject_id = row[1].clone().unwrap_or(String::from(""));
+        if subject_id != "" && !subject_ids.contains(&subject_id) {
+            subject_ids.push(subject_id);
         }
     }
 
-    eprintln!("********************* {:?} ****************", operands);
-    //if 1 == 1 { process::exit(1); }
+    let mut subjects = HashMap::new();
+    let mut dependencies: HashMap<String, Vec<_>> = HashMap::new();
+    for subject_id in subject_ids.iter() {
+        let mut predicates: HashMap<String, Vec<_>> = HashMap::new();
+        for row in thin_rows.iter() {
+            if subject_id.to_string() != row[1].clone().unwrap_or(String::from("")) {
+                continue;
+            }
 
-    let operands = RDFObject::Nested(operands);
-    return operands;
-}
+            let predicate = row[2].clone().unwrap_or(String::from(""));
+            if let Some(v) = predicates.get_mut(&predicate) {
+                v.push(row2object_map(row.to_vec()));
+                v.sort_by(|a, b| {
+                    let a = to_string(&a).unwrap_or(String::from(""));
+                    let b = to_string(&b).unwrap_or(String::from(""));
+                    a.cmp(&b)
+                });
+            }
+            else if predicate != "" {
+                predicates.insert(predicate, vec![]);
+            }
+            else {
+                eprintln!("WARNING row {:?} has empty predicate", row);
+            }
 
-fn render_owl_class_expression(
-    stanza_rows: &Vec<Vec<Option<String>>>, given_rows: Vec<&Vec<Option<String>>>,
-) -> HashMap<String, RDFObject> {
-    let class_row = {
-        if let Some(class_row) = given_rows
-            .iter()
-            .find(|r| match &r[1] {
-                Some(pred) => pred.starts_with("owl:"),
-                None => false,
-            })
-            .map(|&r| r.clone())
-        {
-            class_row
-        }
-        else {
-            let v = vec![];
-            v
-        }
-    };
-
-    let rdf_type_rows: Vec<_> = {
-        given_rows
-            .iter()
-            .filter(|r| r[1] == Some(String::from("rdf:type")))
-            .collect()
-    };
-
-    eprintln!("Found rows: {:?}, {:?}", rdf_type_rows, class_row);
-
-    let rdf_type_objs: Vec<_> = {
-        rdf_type_rows
-            .iter()
-            .map(|r| r[2].clone())
-            .map(|c| {
-                if let Some(obj) = c {
-                    obj
+            let object = row[3].clone().unwrap_or(String::from(""));
+            if object != "" && object.starts_with("_:") {
+                if let Some(v) = dependencies.get_mut(subject_id) {
+                    // add uniquely to v
+                    if !v.contains(&object) {
+                        v.push(object);
+                    }
                 }
                 else {
-                    String::from("")
+                    dependencies.insert(subject_id.to_string(), vec![object]);
                 }
-            })
-            .collect()
-    };
-
-    let mut rdf_part = vec![];
-    for obj in rdf_type_objs.iter() {
-        rdf_part.push({
-            // TODO: Make it so that these are added in sorted order:
-            let mut obj_map = HashMap::new();
-            obj_map.insert(String::from("object"), RDFObject::Flat(obj.clone()));
-            obj_map
-        });
-    }
-    let rdf_part = RDFObject::Nested(rdf_part);
-
-    // Add the RDF part to the class expression:
-    let mut ce = HashMap::new();
-    ce.insert(String::from("rdf:type"), rdf_part);
-
-    let class_subj = {
-        if let Some(class_subj) = class_row.get(0).and_then(|r| r.clone()) {
-            class_subj
+            }
         }
-        else {
-            String::from("")
-        }
-    };
-    let class_pred = {
-        if let Some(class_pred) = class_row.get(1).and_then(|r| r.clone()) {
-            class_pred
-        }
-        else {
-            String::from("")
-        }
-    };
-    let class_obj = {
-        if let Some(class_obj) = class_row.get(2).and_then(|r| r.clone()) {
-            class_obj
-        }
-        else {
-            String::from("")
-        }
-    };
-
-    eprintln!(
-        "Rendering <s,p,o> = <{}, {}, {}>",
-        class_subj, class_pred, class_obj
-    );
-
-    let operands = get_owl_operands(stanza_rows, &class_row);
-    if vec![
-        "owl:intersectionOf",
-        "owl:unionOf",
-        "owl:complementOf",
-        "owl:oneOf",
-    ]
-    .iter()
-    .any(|&i| i == class_pred.as_str())
-    {
-        ce.insert(class_pred, operands);
-    }
-    else if class_pred.as_str() == "owl:onProperty" {
-        ce.insert(class_pred, {
-            let property = vec![render_owl_restriction(stanza_rows, given_rows)];
-            RDFObject::Nested(property)
-        });
-    }
-    else if class_obj.starts_with("<") {
-        ce.insert(class_pred, {
-            let mut tmp_map = HashMap::new();
-            tmp_map.insert(String::from("object"), {
-                let mut tmp_map = HashMap::new();
-                tmp_map.insert(String::from("object"), RDFObject::Flat(class_obj));
-                RDFObject::Nested(vec![tmp_map])
-            });
-            RDFObject::Nested(vec![tmp_map])
-        });
+        //eprintln!("Predicates of {:?}: {:?}", subject_id, predicates);
+        subjects.insert(subject_id.to_string(), predicates);
     }
 
-    //eprintln!("..................... {:?} ...................", ce);
-    //if 1 == 1 { process::exit(1); }
+    // Work from leaves to root, nesting the blank structures:
+    while !dependencies.is_empty() {
+        let mut leaves = vec![];
+        for leaf in subjects.keys() {
+            if !dependencies.keys().collect::<Vec<_>>().contains(&leaf) {
+                leaves.push(leaf.clone());
+            }
+        }
 
-    return ce;
+        dependencies.clear();
+        let mut handled = vec![];
+        let mut subjects_tmp = HashMap::new();
+        for (subject_id, predicates) in subjects.iter() {
+            for predicate in predicates.keys() {
+                let mut objects = vec![];
+                for obj in predicates.get(predicate).unwrap_or(&vec![]) {
+                    let o = obj.get(&String::from("object"));
+                    match o {
+                        Some(o) => {
+                            if o.starts_with("_:") {
+                                if leaves.contains(&o) {
+                                    let val = subjects.get(o).unwrap_or(&HashMap::new()).clone();
+                                    let mut complex_obj = HashMap::new();
+                                    complex_obj.insert(String::from("object"), val);
+                                    if !handled.contains(o) {
+                                        handled.push(o.clone());
+                                    }
+                                }
+                                else {
+                                    if let Some(v) = dependencies.get_mut(subject_id) {
+                                        if !v.contains(o) {
+                                            v.push(o.clone());
+                                        }
+                                    }
+                                    else {
+                                        dependencies.insert(subject_id.clone(), vec![o.clone()]);
+                                    }
+                                }
+                            }
+                        }
+                        None => {}
+                    }
+                    objects.push(obj.clone());
+                }
+                objects.sort_by(|a, b| {
+                    let a = to_string(&a).unwrap_or(String::from(""));
+                    let b = to_string(&b).unwrap_or(String::from(""));
+                    a.cmp(&b)
+                });
+                let mut predicates_tmp = predicates.clone();
+                predicates_tmp.insert(predicate.clone(), objects);
+                subjects_tmp.insert(subject_id.clone(), predicates_tmp);
+            }
+        }
+        subjects = subjects_tmp.clone();
+        for subject_id in handled {
+            subjects.remove(&subject_id);
+        }
+    }
+
+    // TODO: Handle OWL annotations and RDF reification
+    //...
+
+    return subjects;
 }
 
-fn row2o(
-    uber_row: &Vec<Option<String>>, stanza_rows: &Vec<Vec<Option<String>>>,
-) -> Vec<Option<String>> {
-    // A handy closure for getting the value of the ith column of the uber row:
-    let get_uber_column = |index: usize| -> &str {
-        match &uber_row[index].as_ref() {
-            Some(obj) => obj,
-            None => "",
-        }
-    };
-
-    let uber_subj = String::from(get_uber_column(0));
-    let uber_pred = String::from(get_uber_column(1));
-    let uber_obj = String::from(get_uber_column(2));
-    let uber_val = String::from(get_uber_column(3));
-    eprintln!(
-        "Called row2o on <s,p,o> = <{}, {}, {}>",
-        uber_subj, uber_pred, uber_obj
-    );
-
-    if uber_obj.is_empty() {
-        if uber_val.is_empty() {
-            eprintln!("ERROR: Received empty object with empty value");
-        }
-        else {
-            eprintln!("Rendering empty object with value: {}", uber_val);
-        }
-        return uber_row.clone();
-    }
-    else if uber_obj.starts_with("<") {
-        eprintln!("Rendering literal IRI: {}", uber_obj);
-        return uber_row.clone();
-    }
-    else if !uber_obj.starts_with("_:") {
-        eprintln!(
-            "Rendering non-blank triple: <s,p,o> = <{}, {}, {}>",
-            uber_subj, uber_pred, uber_obj
-        );
-        return uber_row.clone();
-    }
-    else {
-        eprintln!(
-            "Rendering triple with blank object: <s,p,o> = <{}, {}, {}>",
-            uber_subj, uber_pred, uber_obj
-        );
-
-        let inner_rows: Vec<_> = {
-            stanza_rows
-                .iter()
-                .filter(|&r| r[0].as_ref() == Some(&uber_obj))
-                .collect()
+fn render_subjects(subjects: HashMap<String, HashMap<String, Vec<HashMap<String, String>>>>) {
+    let mut subject_ids: Vec<_> = subjects.keys().collect();
+    subject_ids.sort();
+    for subject_id in subject_ids {
+        eprintln!("{}", subject_id);
+        let predicates = subjects.get(subject_id);
+        let mut pkeys: Vec<_> = match predicates {
+            Some(p) => p.keys().collect(),
+            None => vec![],
         };
-
-        let object_type_row = {
-            if let Some(object_type_row) = inner_rows
-                .iter()
-                .find(|r| r[1] == Some(String::from("rdf:type")))
-                .map(|&r| r.clone())
-            {
-                object_type_row
-            }
-            else {
-                let v = vec![];
-                v
-            }
-        };
-        let object_type = {
-            if let Some(object_type) = object_type_row.get(2).and_then(|r| r.clone()) {
-                object_type
-            }
-            else {
-                String::from("")
-            }
-        };
-
-        match object_type.as_str() {
-            "owl:Class" => {
-                eprintln!("Rendering OWL class pointed to by {}", uber_obj);
-                let ce = render_owl_class_expression(stanza_rows, inner_rows);
-                let ce = match to_string(&ce) {
-                    Ok(ce) => ce,
-                    Err(_) => String::from(""),
-                };
-                let mut row_to_return = uber_row.clone();
-                row_to_return[2] = Some(ce);
-                return row_to_return;
-            }
-            "owl:Restriction" => {
-                eprintln!("Rendering OWL restriction pointed to by {}", uber_obj);
-                let restr = render_owl_restriction(stanza_rows, inner_rows);
-                let restr = match to_string(&restr) {
-                    Ok(restr) => restr,
-                    Err(_) => String::from(""),
-                };
-                let mut row_to_return = uber_row.clone();
-                row_to_return[2] = Some(restr);
-                return row_to_return;
-            }
-            "" => {
-                eprintln!("WARNING Could not determine object type for {}", uber_pred);
-                return uber_row.clone();
-            }
-            _ => {
-                eprintln!(
-                    "WARNING Unrecognised object type: {} for predicate {}",
-                    object_type, uber_pred
-                );
-                return uber_row.clone();
+        pkeys.sort();
+        for pkey in pkeys {
+            eprintln!(" {}", pkey);
+            let objs = match predicates {
+                Some(p) => p.get(pkey).unwrap().clone(),
+                None => vec![],
+            };
+            for obj in objs {
+                eprintln!("   {:?}", obj);
             }
         }
     }
@@ -557,21 +262,17 @@ fn row2o(
 fn get_rows_to_insert(
     stanza_stack: &mut Vec<Vec<Option<String>>>, stanza_name: &mut String,
 ) -> Vec<Vec<Option<String>>> {
-    let mut rows: Vec<Vec<Option<String>>> = [].to_vec();
-    for s in stanza_stack.iter() {
-        if stanza_name == "" {
-            if let Some(ref sb) = s[1] {
-                *stanza_name = sb.clone();
-                eprintln!("Changing stanza name to {}", stanza_name);
-            }
-        }
-        let mut v = vec![Some(stanza_name.to_string())];
-        let s = row2o(&s, &stanza_stack);
-        v.extend_from_slice(&s);
-        rows.push(v);
-    }
+    //eprintln!("Processing stanza: {} ...", stanza_name);
 
-    return rows;
+    let thin_rows = thinify(stanza_stack, stanza_name);
+    let subjects = thin2subjects(&thin_rows);
+    eprintln!("#############################################");
+    eprintln!("{:?}", subjects);
+    eprintln!("#############################################");
+    render_subjects(subjects);
+
+    // TODO: replace this later with thickified rows:
+    return thin_rows;
 }
 
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
