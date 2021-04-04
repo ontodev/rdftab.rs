@@ -173,10 +173,13 @@ fn thin2subjects(
                             let o = o.clone();
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
-                                    // TODO: Instead of converting to a String here, we should
+                                    // TODO (maybe): Instead of converting to a String here,
                                     // create a complex object. This will require us to redefine
                                     // predicates so that it is a map from Strings to possibly
-                                    // nested objects.
+                                    // nested objects. On the other hand we are going to be
+                                    // converting everything to a String later anyway so it doesn't
+                                    // seem problematic to convert to String at this point if it is
+                                    // more convenient. It will depend on what happens later.
                                     let val = subjects.get(&o).unwrap_or(&BTreeMap::new()).clone();
                                     let val = to_string(&val).unwrap_or(String::from(""));
                                     obj.insert(String::from("object"), val);
