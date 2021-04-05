@@ -105,7 +105,7 @@ fn thin2subjects(
     }
 
     for subject_id in subject_ids.iter() {
-        let mut predicates: BTreeMap<String, Vec<_>> = BTreeMap::new();
+        let mut predicates = BTreeMap::new();
         for row in thin_rows.iter() {
             if subject_id.to_string() != get_column_contents(row[1].as_ref()) {
                 continue;
@@ -151,7 +151,7 @@ fn thin2subjects(
 
     // Work from leaves to root, nesting the blank structures:
     while !dependencies.is_empty() {
-        let mut leaves: BTreeSet<String> = vec![].into_iter().collect();
+        let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
         for leaf in subjects.keys() {
             if !dependencies.keys().collect::<Vec<_>>().contains(&leaf) {
                 leaves.insert(leaf.clone());
@@ -160,8 +160,13 @@ fn thin2subjects(
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
+        // TODO: this clone seems expensive; it seems like it should be avoidable, e.g., by cloning
+        // the result of the call to keys: subjects.keys().clone(), but the Rust compiler complains.
         for subject_id in subjects.clone().keys() {
             let mut predicates = subjects.get(subject_id).unwrap_or(&BTreeMap::new()).clone();
+            // TODO: this clone seems expensive; it seems like it should be avoidable, e.g., by
+            // cloning the result of the call to keys: predicates.keys().clone(), but the Rust
+            // compiler complains.
             for predicate in predicates.clone().keys() {
                 let mut objects = vec![];
                 for obj in predicates.get(predicate).unwrap_or(&vec![]) {
@@ -192,13 +197,13 @@ fn thin2subjects(
                                     else {
                                         let mut v = BTreeSet::new();
                                         v.insert(o);
-                                        dependencies.insert(subject_id.clone(), v);
+                                        dependencies.insert(subject_id.to_string(), v);
                                     }
                                 }
                             }
                         }
                     }
-                    objects.push(obj.clone());
+                    objects.push(obj);
                 }
                 objects.sort_by(|a, b| {
                     let a = to_string(&a).unwrap_or(String::from(""));
