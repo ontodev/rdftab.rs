@@ -1,7 +1,9 @@
 // Based on https://docs.rs/csv/1.1.3/csv/tutorial/index.html
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
+use std::fmt;
 use std::io;
 use std::process;
 
@@ -18,6 +20,71 @@ use rusqlite::{params, Connection, Result};
 struct Prefix {
     prefix: String,
     base: String,
+}
+
+#[derive(Clone, Serialize, Debug, Eq)]
+enum RDFObject {
+    Nested(Vec<BTreeMap<String, RDFObject>>),
+    Flat(String),
+}
+
+impl fmt::Display for RDFObject {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RDFObject::Nested(v) => {
+                let mut rdfobj_vec = String::from("[");
+                for (i, bt_map) in v.iter().enumerate() {
+                    rdfobj_vec.push_str(&String::from("{"));
+                    for (j, (key, val)) in bt_map.iter().enumerate() {
+                        rdfobj_vec.push_str(&format!("\"{}\"", key));
+                        rdfobj_vec.push_str(&String::from(": "));
+                        rdfobj_vec.push_str(&format!("{}", val));
+                        if j < (bt_map.keys().len() - 1) {
+                            rdfobj_vec.push_str(",");
+                        }
+                    }
+                    rdfobj_vec.push_str(&String::from("}"));
+                    if i < (v.len() - 1) {
+                        rdfobj_vec.push_str(&String::from(","));
+                    }
+                }
+                rdfobj_vec.push_str(&String::from("]"));
+                write!(f, "{}", rdfobj_vec)
+            }
+            RDFObject::Flat(s) => write!(f, "\"{}\"", s),
+        }
+    }
+}
+
+impl Ord for RDFObject {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a = to_string(self).unwrap_or(String::from(""));
+        let b = to_string(other).unwrap_or(String::from(""));
+        a.cmp(&b)
+    }
+}
+
+impl PartialOrd for RDFObject {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for RDFObject {
+    fn eq(&self, other: &Self) -> bool {
+        let a = to_string(self).unwrap_or(String::from(""));
+        let b = to_string(other).unwrap_or(String::from(""));
+        a == b
+    }
+}
+
+impl RDFObject {
+    fn is_blank(&self) -> bool {
+        match self {
+            RDFObject::Nested(a) => false,
+            RDFObject::Flat(a) => a.starts_with("_:"),
+        }
+    }
 }
 
 fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
@@ -67,7 +134,7 @@ fn get_column_contents(c: Option<&String>) -> String {
     }
 }
 
-fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, String> {
+fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDFObject> {
     let object = get_column_contents(row[3].as_ref());
     let value = get_column_contents(row[4].as_ref());
     let datatype = get_column_contents(row[5].as_ref());
@@ -75,15 +142,15 @@ fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, String> {
 
     let mut object_map = BTreeMap::new();
     if object != "" {
-        object_map.insert(String::from("object"), object);
+        object_map.insert(String::from("object"), RDFObject::Flat(object));
     }
     else if value != "" {
-        object_map.insert(String::from("value"), value);
+        object_map.insert(String::from("value"), RDFObject::Flat(value));
         if datatype != "" {
-            object_map.insert(String::from("datatype"), datatype);
+            object_map.insert(String::from("datatype"), RDFObject::Flat(datatype));
         }
         else if language != "" {
-            object_map.insert(String::from("language"), language);
+            object_map.insert(String::from("language"), RDFObject::Flat(language));
         }
     }
     else {
@@ -96,7 +163,7 @@ fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, String> {
 
 fn thin2subjects(
     thin_rows: &Vec<Vec<Option<String>>>,
-) -> BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, String>>>> {
+) -> BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>> {
     let mut subjects = BTreeMap::new();
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
     let mut subject_ids: BTreeSet<String> = vec![].into_iter().collect();
@@ -147,7 +214,6 @@ fn thin2subjects(
         }
         subjects.insert(subject_id.to_string(), predicates);
     }
-    println!("SUBJECTS ARE:\n {}", to_string_pretty(&subjects).unwrap());
 
     // Work from leaves to root, nesting the blank structures:
     while !dependencies.is_empty() {
@@ -160,43 +226,49 @@ fn thin2subjects(
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        // TODO: this clone seems expensive; it seems like it should be avoidable, e.g., by cloning
-        // the result of the call to keys: subjects.keys().clone(), but the Rust compiler complains.
-        for subject_id in subjects.clone().keys() {
-            let mut predicates = subjects.get(subject_id).unwrap_or(&BTreeMap::new()).clone();
-            // TODO: this clone seems expensive; it seems like it should be avoidable, e.g., by
-            // cloning the result of the call to keys: predicates.keys().clone(), but the Rust
-            // compiler complains.
-            for predicate in predicates.clone().keys() {
+        for subject_id in subjects.keys().map(|s| s.to_string()).collect::<Vec<_>>() {
+            let mut predicates = subjects
+                .get(&subject_id)
+                .unwrap_or(&BTreeMap::new())
+                .clone();
+            for predicate in predicates.keys().map(|s| s.to_string()).collect::<Vec<_>>() {
                 let mut objects = vec![];
-                for obj in predicates.get(predicate).unwrap_or(&vec![]) {
+                for obj in predicates.get(&predicate).unwrap_or(&vec![]) {
                     let mut obj = obj.clone();
-                    let o = obj.get(&String::from("object"));
+                    let empty_obj = RDFObject::Flat(String::from(""));
+                    let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
+                    let o = o.clone();
                     match o {
-                        None => {}
-                        Some(o) => {
-                            let o = o.clone();
-                            if o.starts_with("_:") {
+                        RDFObject::Nested(o) => {}
+                        RDFObject::Flat(o) => {
+                            if format!("{}", o).starts_with("_:") {
                                 if leaves.contains(&o) {
-                                    // TODO (maybe): Instead of converting to a String here,
-                                    // create a complex object. This will require us to redefine
-                                    // predicates so that it is a map from Strings to possibly
-                                    // nested objects. On the other hand we are going to be
-                                    // converting everything to a String later anyway so it doesn't
-                                    // seem problematic to convert to String at this point if it is
-                                    // more convenient. It will depend on what happens later.
-                                    let val = subjects.get(&o).unwrap_or(&BTreeMap::new()).clone();
-                                    let val = to_string(&val).unwrap_or(String::from(""));
-                                    obj.insert(String::from("object"), val);
+                                    let object_val = {
+                                        if let Some(v) = subjects.get(&o) {
+                                            let mut w = BTreeMap::new();
+                                            for (key, val) in v.iter() {
+                                                let val = RDFObject::Nested(val.to_vec());
+                                                w.insert(key.to_string(), val);
+                                            }
+                                            RDFObject::Nested(vec![w])
+                                        }
+                                        else {
+                                            RDFObject::Nested(vec![])
+                                        }
+                                    };
+                                    obj.clear();
+                                    obj.insert(String::from("object"), object_val);
                                     handled.insert(o);
                                 }
                                 else {
-                                    if let Some(v) = dependencies.get_mut(subject_id) {
-                                        v.insert(o);
+                                    if let Some(v) = dependencies.get_mut(&subject_id) {
+                                        // We expect o to be a RDFObject::Flat
+                                        v.insert(format!("{}", o));
                                     }
                                     else {
                                         let mut v = BTreeSet::new();
-                                        v.insert(o);
+                                        // We expect o to be a RDFObject::Flat
+                                        v.insert(format!("{}", o));
                                         dependencies.insert(subject_id.to_string(), v);
                                     }
                                 }
@@ -219,40 +291,42 @@ fn thin2subjects(
         }
     }
 
-    println!(
-        "SUBJECTS ARE NOW:\n {}",
-        to_string_pretty(&subjects).unwrap()
-    );
-
     // TODO: Handle OWL annotations and RDF reification
     //...
 
-    //return subjects;
-    return BTreeMap::new();
+    return subjects;
 }
 
-fn render_subjects(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, String>>>>) {
-    let mut subject_ids: Vec<_> = subjects.keys().collect();
-    subject_ids.sort();
-    for subject_id in subject_ids {
-        println!("{}", subject_id);
-        let predicates = subjects.get(subject_id);
-        let mut pkeys: Vec<_> = match predicates {
-            Some(p) => p.keys().collect(),
-            None => vec![],
-        };
-        pkeys.sort();
-        for pkey in pkeys {
-            println!(" {}", pkey);
-            let objs = match predicates {
-                Some(p) => p.get(pkey).unwrap().clone(),
-                None => vec![],
-            };
-            for obj in objs {
-                println!("   {:?}", obj);
-            }
+fn jsonify(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>>) {
+    print!("{{");
+    for (i, (k1, v1)) in subjects.iter().enumerate() {
+        print!("\"{}\":{{", k1);
+        for (j, (k2, v2)) in v1.iter().enumerate() {
+            print!("\"{}\": ", k2);
+            let v2 = RDFObject::Nested(v2.to_vec());
+            print!("{}{}", v2, {
+                if j < (v1.keys().len() - 1) {
+                    ","
+                }
+                else {
+                    ""
+                }
+            });
         }
+        print!("}}{}", {
+            if i < (subjects.keys().len() - 1) {
+                ","
+            }
+            else {
+                ""
+            }
+        });
     }
+    print!("}}");
+}
+
+fn thickify(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>>) {
+    jsonify(subjects)
 }
 
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
@@ -355,16 +429,11 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         // more robust error handling mechanism.
         .unwrap();
 
-    //println!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-    //println!("Received {} rows:\n{}", thin_rows.len(),
-    //         to_string_pretty(&thin_rows).unwrap());
-    //println!("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
-
     let subjects = thin2subjects(&thin_rows);
-    //println!("#############################################");
-    //println!("{}", to_string_pretty(&subjects).unwrap());
-    //println!("#############################################");
-    // render_subjects(subjects);
+    jsonify(subjects);
+
+    // TODO
+    //thickify(subjects);
 
     for row in thin_rows {
         let mut stmt = tx
