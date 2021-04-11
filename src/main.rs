@@ -8,7 +8,7 @@ use std::io;
 use std::process;
 
 use serde::Serialize;
-use serde_json::{to_string, to_string_pretty};
+use serde_json::to_string;
 
 use rio_api::model::*;
 use rio_api::parser::TriplesParser;
@@ -23,27 +23,41 @@ struct Prefix {
 }
 
 #[derive(Clone, Serialize, Debug, Eq)]
-enum RDFObject {
-    Nested(Vec<BTreeMap<String, RDFObject>>),
-    Flat(String),
+enum RDF {
+    RDFThickVec(Vec<RDF>),
+    RDFThick(BTreeMap<String, RDF>),
+    RDFThin(String),
 }
 
-impl fmt::Display for RDFObject {
+fn render_thick_obj(bt_map: &RDF) -> String {
+    let mut string_to_return = String::from("");
+    let empty_map = BTreeMap::new();
+    let bt_map = match bt_map {
+        RDF::RDFThick(bt_map) => bt_map,
+        _ => &empty_map,
+    };
+    string_to_return.push_str(&String::from("{"));
+    for (j, (key, val)) in bt_map.iter().enumerate() {
+        string_to_return.push_str(&format!("\"{}\"", key));
+        string_to_return.push_str(&String::from(": "));
+        string_to_return.push_str(&format!("{}", val));
+        if j < (bt_map.keys().len() - 1) {
+            string_to_return.push_str(",");
+        }
+    }
+    string_to_return.push_str(&String::from("}"));
+    string_to_return
+}
+
+impl fmt::Display for RDF {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            RDFObject::Nested(v) => {
-                let mut rdfobj_vec = String::from("[");
+            RDF::RDFThickVec(v) => {
+                let mut rdfobj_vec = String::from("");
+                rdfobj_vec.push_str(&String::from("["));
                 for (i, bt_map) in v.iter().enumerate() {
-                    rdfobj_vec.push_str(&String::from("{"));
-                    for (j, (key, val)) in bt_map.iter().enumerate() {
-                        rdfobj_vec.push_str(&format!("\"{}\"", key));
-                        rdfobj_vec.push_str(&String::from(": "));
-                        rdfobj_vec.push_str(&format!("{}", val));
-                        if j < (bt_map.keys().len() - 1) {
-                            rdfobj_vec.push_str(",");
-                        }
-                    }
-                    rdfobj_vec.push_str(&String::from("}"));
+                    let thick_obj = render_thick_obj(bt_map);
+                    rdfobj_vec.push_str(thick_obj.as_str());
                     if i < (v.len() - 1) {
                         rdfobj_vec.push_str(&String::from(","));
                     }
@@ -51,12 +65,15 @@ impl fmt::Display for RDFObject {
                 rdfobj_vec.push_str(&String::from("]"));
                 write!(f, "{}", rdfobj_vec)
             }
-            RDFObject::Flat(s) => write!(f, "\"{}\"", s),
+            RDF::RDFThick(_) => {
+                write!(f, "{}", render_thick_obj(self))
+            }
+            RDF::RDFThin(s) => write!(f, "\"{}\"", s),
         }
     }
 }
 
-impl Ord for RDFObject {
+impl Ord for RDF {
     fn cmp(&self, other: &Self) -> Ordering {
         let a = to_string(self).unwrap_or(String::from(""));
         let b = to_string(other).unwrap_or(String::from(""));
@@ -64,26 +81,17 @@ impl Ord for RDFObject {
     }
 }
 
-impl PartialOrd for RDFObject {
+impl PartialOrd for RDF {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for RDFObject {
+impl PartialEq for RDF {
     fn eq(&self, other: &Self) -> bool {
         let a = to_string(self).unwrap_or(String::from(""));
         let b = to_string(other).unwrap_or(String::from(""));
         a == b
-    }
-}
-
-impl RDFObject {
-    fn is_blank(&self) -> bool {
-        match self {
-            RDFObject::Nested(a) => false,
-            RDFObject::Flat(a) => a.starts_with("_:"),
-        }
     }
 }
 
@@ -134,7 +142,7 @@ fn get_column_contents(c: Option<&String>) -> String {
     }
 }
 
-fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDFObject> {
+fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDF> {
     let object = get_column_contents(row[3].as_ref());
     let value = get_column_contents(row[4].as_ref());
     let datatype = get_column_contents(row[5].as_ref());
@@ -142,15 +150,15 @@ fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDFObject> {
 
     let mut object_map = BTreeMap::new();
     if object != "" {
-        object_map.insert(String::from("object"), RDFObject::Flat(object));
+        object_map.insert(String::from("object"), RDF::RDFThin(object));
     }
     else if value != "" {
-        object_map.insert(String::from("value"), RDFObject::Flat(value));
+        object_map.insert(String::from("value"), RDF::RDFThin(value));
         if datatype != "" {
-            object_map.insert(String::from("datatype"), RDFObject::Flat(datatype));
+            object_map.insert(String::from("datatype"), RDF::RDFThin(datatype));
         }
         else if language != "" {
-            object_map.insert(String::from("language"), RDFObject::Flat(language));
+            object_map.insert(String::from("language"), RDF::RDFThin(language));
         }
     }
     else {
@@ -161,9 +169,7 @@ fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDFObject> {
     return object_map;
 }
 
-fn thin2subjects(
-    thin_rows: &Vec<Vec<Option<String>>>,
-) -> BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>> {
+fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> {
     let mut subjects = BTreeMap::new();
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
     let mut subject_ids: BTreeSet<String> = vec![].into_iter().collect();
@@ -235,25 +241,32 @@ fn thin2subjects(
                 let mut objects = vec![];
                 for obj in predicates.get(&predicate).unwrap_or(&vec![]) {
                     let mut obj = obj.clone();
-                    let empty_obj = RDFObject::Flat(String::from(""));
+                    let empty_obj = RDF::RDFThin(String::from(""));
                     let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
                     let o = o.clone();
                     match o {
-                        RDFObject::Nested(o) => {}
-                        RDFObject::Flat(o) => {
-                            if format!("{}", o).starts_with("_:") {
+                        RDF::RDFThickVec(_) => {}
+                        RDF::RDFThick(_) => {}
+                        RDF::RDFThin(o) => {
+                            if o.starts_with("_:") {
                                 if leaves.contains(&o) {
                                     let object_val = {
                                         if let Some(v) = subjects.get(&o) {
                                             let mut w = BTreeMap::new();
                                             for (key, val) in v.iter() {
-                                                let val = RDFObject::Nested(val.to_vec());
+                                                let val = {
+                                                    let mut tmp = vec![];
+                                                    for bt_map in val.iter() {
+                                                        tmp.push(RDF::RDFThick(bt_map.clone()));
+                                                    }
+                                                    RDF::RDFThickVec(tmp)
+                                                };
                                                 w.insert(key.to_string(), val);
                                             }
-                                            RDFObject::Nested(vec![w])
+                                            RDF::RDFThick(w)
                                         }
                                         else {
-                                            RDFObject::Nested(vec![])
+                                            RDF::RDFThick(BTreeMap::new())
                                         }
                                     };
                                     obj.clear();
@@ -262,12 +275,12 @@ fn thin2subjects(
                                 }
                                 else {
                                     if let Some(v) = dependencies.get_mut(&subject_id) {
-                                        // We expect o to be a RDFObject::Flat
+                                        // We expect o to be a RDF::RDFThin
                                         v.insert(format!("{}", o));
                                     }
                                     else {
                                         let mut v = BTreeSet::new();
-                                        // We expect o to be a RDFObject::Flat
+                                        // We expect o to be a RDF::RDFThin
                                         v.insert(format!("{}", o));
                                         dependencies.insert(subject_id.to_string(), v);
                                     }
@@ -294,16 +307,46 @@ fn thin2subjects(
     // TODO: Handle OWL annotations and RDF reification
     //...
 
-    return subjects;
+    // Construct the RDF and return:
+    return {
+        let mut tmp1 = BTreeMap::new();
+        for (k1, v1) in subjects.iter() {
+            let mut tmp2 = BTreeMap::new();
+            for (k2, v2) in v1.iter() {
+                let val = {
+                    let mut thick_vec = vec![];
+                    for bt_map in v2.iter() {
+                        thick_vec.push(RDF::RDFThick(bt_map.clone()));
+                    }
+                    RDF::RDFThickVec(thick_vec)
+                };
+
+                tmp2.insert(k2.to_string(), val);
+            }
+            tmp1.insert(k1.to_string(), RDF::RDFThick(tmp2));
+        }
+        tmp1
+    };
 }
 
-fn jsonify(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>>) {
+fn jsonify(subjects: BTreeMap<String, RDF>) {
     print!("{{");
     for (i, (k1, v1)) in subjects.iter().enumerate() {
         print!("\"{}\":{{", k1);
+        let empty_map = BTreeMap::new();
+        let v1 = match v1 {
+            RDF::RDFThick(bt_map) => bt_map,
+            _ => &empty_map,
+        };
+
         for (j, (k2, v2)) in v1.iter().enumerate() {
+            let empty = vec![];
+            let v2 = match v2 {
+                RDF::RDFThickVec(v) => v,
+                _ => &empty,
+            };
             print!("\"{}\": ", k2);
-            let v2 = RDFObject::Nested(v2.to_vec());
+            let v2 = RDF::RDFThickVec(v2.to_vec());
             print!("{}{}", v2, {
                 if j < (v1.keys().len() - 1) {
                     ","
@@ -323,10 +366,6 @@ fn jsonify(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFO
         });
     }
     print!("}}");
-}
-
-fn thickify(subjects: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDFObject>>>>) {
-    jsonify(subjects)
 }
 
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
