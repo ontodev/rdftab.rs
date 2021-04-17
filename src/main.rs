@@ -29,6 +29,46 @@ enum RDF {
     Thin(String),
 }
 
+fn thick_thickvec_to_thickrdf(
+    ttv: BTreeMap<String, Vec<BTreeMap<String, RDF>>>
+) -> BTreeMap<String, RDF> {
+    let mut w = BTreeMap::new();
+    for (key, val) in ttv.iter() {
+        let val = {
+            let mut tmp = vec![];
+            for bt_map in val.iter() {
+                tmp.push(RDF::Thick(bt_map.clone()));
+            }
+            RDF::ThickVec(tmp)
+        };
+        w.insert(key.to_string(), val);
+    }
+    w
+}
+
+fn doublethick_thickvec_to_thickrdf(
+    dttv: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>
+) -> BTreeMap<String, RDF> {
+    let mut map_to_return = BTreeMap::new();
+    for (k1, v1) in dttv.iter() {
+        let mut tmp = BTreeMap::new();
+        for (k2, v2) in v1.iter() {
+            let val = {
+                let mut thick_vec = vec![];
+                for bt_map in v2.iter() {
+                    thick_vec.push(RDF::Thick(bt_map.clone()));
+                }
+                RDF::ThickVec(thick_vec)
+            };
+
+            tmp.insert(k2.to_string(), val);
+        }
+        map_to_return.insert(k1.to_string(), RDF::Thick(tmp));
+    }
+    map_to_return
+}
+
+
 impl RDF {
     fn render(&self) -> String {
         let mut string_to_return = String::from("");
@@ -266,19 +306,8 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
                                     let object_val = {
-                                        if let Some(v) = subjects.get(&o) {
-                                            let mut w = BTreeMap::new();
-                                            for (key, val) in v.iter() {
-                                                let val = {
-                                                    let mut tmp = vec![];
-                                                    for bt_map in val.iter() {
-                                                        tmp.push(RDF::Thick(bt_map.clone()));
-                                                    }
-                                                    RDF::ThickVec(tmp)
-                                                };
-                                                w.insert(key.to_string(), val);
-                                            }
-                                            RDF::Thick(w)
+                                        if let Some(o) = subjects.get(&o) {
+                                            RDF::Thick(thick_thickvec_to_thickrdf(o.clone()))
                                         }
                                         else {
                                             RDF::Thick(BTreeMap::new())
@@ -347,19 +376,9 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                 for o in objs {
                     let mut o = o.clone();
                     if o == obj {
-                        o.insert(String::from("annotations"), {
-                            let mut result: BTreeMap<String, RDF> = BTreeMap::new();
-                            for (key, val_vec) in subjects_copy.get(&subject_id).unwrap().iter() {
-                                result.insert(key.to_string(), {
-                                    let mut rdf_vec = vec![];
-                                    for val in val_vec {
-                                        rdf_vec.push(RDF::Thick(val.clone()));
-                                    }
-                                    RDF::ThickVec(rdf_vec)
-                                });
-                            }
-                            RDF::Thick(result)
-                        });
+                        let new_preds = subjects_copy.get(&subject_id).unwrap().clone();
+                        let new_preds = thick_thickvec_to_thickrdf(new_preds);
+                        o.insert(String::from("annotations"), RDF::Thick(new_preds));
                         remove.insert(subject_id.to_string());
                     }
                     objs_copy.push(o);
@@ -391,19 +410,9 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                 for o in objs {
                     let mut o = o.clone();
                     if o == obj {
-                        o.insert(String::from("annotations"), {
-                            let mut result: BTreeMap<String, RDF> = BTreeMap::new();
-                            for (key, val_vec) in subjects_copy.get(&subject_id).unwrap().iter() {
-                                result.insert(key.to_string(), {
-                                    let mut rdf_vec = vec![];
-                                    for val in val_vec {
-                                        rdf_vec.push(RDF::Thick(val.clone()));
-                                    }
-                                    RDF::ThickVec(rdf_vec)
-                                });
-                            }
-                            RDF::Thick(result)
-                        });
+                        let new_preds = subjects_copy.get(&subject_id).unwrap().clone();
+                        let new_preds = thick_thickvec_to_thickrdf(new_preds);
+                        o.insert(String::from("annotations"), RDF::Thick(new_preds));
                         remove.insert(subject_id.to_string());
                     }
                     objs_copy.push(o);
@@ -417,31 +426,10 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         subjects_copy.remove(r);
     }
 
-    // TODO: Remove this code as it should no longer be needed. We will just return subjects_copy.
-    let subjects_copy = {
-        let mut tmp1 = BTreeMap::new();
-        for (k1, v1) in subjects_copy.iter() {
-            let mut tmp2 = BTreeMap::new();
-            for (k2, v2) in v1.iter() {
-                let val = {
-                    let mut thick_vec = vec![];
-                    for bt_map in v2.iter() {
-                        thick_vec.push(RDF::Thick(bt_map.clone()));
-                    }
-                    RDF::ThickVec(thick_vec)
-                };
-
-                tmp2.insert(k2.to_string(), val);
-            }
-            tmp1.insert(k1.to_string(), RDF::Thick(tmp2));
-        }
-        tmp1
-    };
-
     //println!("-----------------------------------------------------------------------");
     //println!("{}", to_string_pretty(&subjects_copy).unwrap());
     //println!("-----------------------------------------------------------------------");
-    return subjects_copy;
+    return doublethick_thickvec_to_thickrdf(subjects_copy);
 }
 
 fn jsonify(subjects: BTreeMap<String, RDF>) {
