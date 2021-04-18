@@ -30,7 +30,7 @@ enum RDF {
 }
 
 fn thick_thickvec_to_thickrdf(
-    ttv: BTreeMap<String, Vec<BTreeMap<String, RDF>>>
+    ttv: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>
 ) -> BTreeMap<String, RDF> {
     let mut w = BTreeMap::new();
     for (key, val) in ttv.iter() {
@@ -47,7 +47,7 @@ fn thick_thickvec_to_thickrdf(
 }
 
 fn doublethick_thickvec_to_thickrdf(
-    dttv: BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>
+    dttv: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>
 ) -> BTreeMap<String, RDF> {
     let mut map_to_return = BTreeMap::new();
     for (k1, v1) in dttv.iter() {
@@ -181,7 +181,7 @@ fn get_column_contents(c: Option<&String>) -> String {
     }
 }
 
-fn row2object_map(row: Vec<Option<String>>) -> BTreeMap<String, RDF> {
+fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
     let object = get_column_contents(row[3].as_ref());
     let value = get_column_contents(row[4].as_ref());
     let datatype = get_column_contents(row[5].as_ref());
@@ -240,7 +240,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
             }
 
             let add_objects_and_sort = |v: &mut Vec<_>| {
-                v.push(row2object_map(row.to_vec()));
+                v.push(row2object_map(&row));
                 v.sort_by(|a, b| {
                     let a = to_string(&a).unwrap_or(String::from(""));
                     let b = to_string(&b).unwrap_or(String::from(""));
@@ -307,7 +307,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                                 if leaves.contains(&o) {
                                     let object_val = {
                                         if let Some(o) = subjects.get(&o) {
-                                            RDF::Thick(thick_thickvec_to_thickrdf(o.clone()))
+                                            RDF::Thick(thick_thickvec_to_thickrdf(&o))
                                         }
                                         else {
                                             RDF::Thick(BTreeMap::new())
@@ -348,77 +348,70 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         }
     }
 
-    // WIP: Handle OWL annotations and RDF reification
+    fn compress(
+        subject_id: &String,
+        subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
+        subjects_copy: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
+        remove: &mut BTreeSet<String>,
+        subject_type: &str,
+        predicate_type: &str,
+        object_type: &str
+    ) {
+        let preds = match subjects.get(subject_id) {
+            Some(p) => p.clone(),
+            None => BTreeMap::new()
+        };
+        let mut subject = format!("{}", first_object(&preds, subject_type));
+        subject = subject.trim_start_matches("\"").trim_end_matches("\"").to_string();
+        let mut predicate = format!("{}", first_object(&preds, predicate_type));
+        predicate = predicate.trim_start_matches("\"").trim_end_matches("\"").to_string();
+        let obj = match preds.get(object_type).and_then(|x| x.first()) {
+            Some(obj) => obj.clone(),
+            None => BTreeMap::new()
+        };
+        println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
+        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(subject_type));
+        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(predicate_type));
+        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(object_type));
+        subjects_copy.get_mut(subject_id).and_then(|x| x.remove("rdf:type"));
+        if let Some(objs) = subjects.get(&subject).and_then(|preds| preds.get(&predicate)) {
+            let mut objs_copy = vec![];
+            for o in objs {
+                let mut o = o.clone();
+                if o == obj {
+                    let new_preds = match subjects_copy.get(subject_id) {
+                        Some(p) => thick_thickvec_to_thickrdf(&p),
+                        None => BTreeMap::new()
+                    };
+                    o.insert(String::from("annotations"), RDF::Thick(new_preds));
+                    remove.insert(subject_id.to_string());
+                }
+                objs_copy.push(o);
+            }
+            *subjects_copy.get_mut(&subject)
+                .and_then(|x| x.get_mut(&predicate))
+                .unwrap_or(&mut vec![]) = objs_copy;
+        }
+    }
+
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut subjects_copy = subjects.clone();
     for subject_id in subjects.keys() {
         let subject_id = subject_id.to_string();
-        if subjects.get(&subject_id).unwrap().contains_key("owl:annotatedSource") {
+        let preds = match subjects.get(&subject_id) {
+            Some(p) => p.clone(),
+            None => BTreeMap::new()
+        };
+        if preds.contains_key("owl:annotatedSource") {
             println!("OWL annotation {}", subject_id);
-            let mut subject = format!("{}", first_object(&subjects.get(&subject_id).unwrap(),
-                                                         "owl:annotatedSource"));
-            subject = subject.trim_start_matches("\"").trim_end_matches("\"").to_string();
-            let mut predicate = format!("{}", first_object(&subjects.get(&subject_id).unwrap(),
-                                                           "owl:annotatedProperty"));
-            predicate = predicate.trim_start_matches("\"").trim_end_matches("\"").to_string();
-            let obj = match subjects.get(&subject_id)
-                .unwrap().get("owl:annotatedTarget").and_then(|x| x.first()) {
-                    Some(obj) => obj.clone(),
-                    None => BTreeMap::new()
-                };
-            println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
-            subjects_copy.get_mut(&subject_id).unwrap().remove("owl:annotatedSource");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("owl:annotatedProperty");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("owl:annotatedTarget");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("rdf:type");
-            if let Some(objs) = subjects.get(&subject).and_then(|preds| preds.get(&predicate)) {
-                let mut objs_copy = vec![];
-                for o in objs {
-                    let mut o = o.clone();
-                    if o == obj {
-                        let new_preds = subjects_copy.get(&subject_id).unwrap().clone();
-                        let new_preds = thick_thickvec_to_thickrdf(new_preds);
-                        o.insert(String::from("annotations"), RDF::Thick(new_preds));
-                        remove.insert(subject_id.to_string());
-                    }
-                    objs_copy.push(o);
-                }
-                *subjects_copy.get_mut(&subject).unwrap().get_mut(&predicate).unwrap() = objs_copy;
-            }
+            compress(&subject_id, &subjects, &mut subjects_copy, &mut remove,
+                     "owl:annotatedSource", "owl:annotatedProperty", "owl:annotatedTarget");
         }
 
-        if subjects.get(&subject_id).unwrap().contains_key("rdf:subject") {
+        if preds.contains_key("rdf:subject") {
             println!("RDF Reification {}", subject_id);
-            let mut subject = format!("{}", first_object(&subjects.get(&subject_id).unwrap(),
-                                                         "rdf:subject"));
-            subject = subject.trim_start_matches("\"").trim_end_matches("\"").to_string();
-            let mut predicate = format!("{}", first_object(&subjects.get(&subject_id).unwrap(),
-                                                           "rdf:predicate"));
-            predicate = predicate.trim_start_matches("\"").trim_end_matches("\"").to_string();
-            let obj = match subjects.get(&subject_id)
-                .unwrap().get("rdf:object").and_then(|x| x.first()) {
-                    Some(obj) => obj.clone(),
-                    None => BTreeMap::new()
-                };
-            println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
-            subjects_copy.get_mut(&subject_id).unwrap().remove("rdf:subject");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("rdf:predicate");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("rdf:object");
-            subjects_copy.get_mut(&subject_id).unwrap().remove("rdf:type");
-            if let Some(objs) = subjects.get(&subject).and_then(|preds| preds.get(&predicate)) {
-                let mut objs_copy = vec![];
-                for o in objs {
-                    let mut o = o.clone();
-                    if o == obj {
-                        let new_preds = subjects_copy.get(&subject_id).unwrap().clone();
-                        let new_preds = thick_thickvec_to_thickrdf(new_preds);
-                        o.insert(String::from("annotations"), RDF::Thick(new_preds));
-                        remove.insert(subject_id.to_string());
-                    }
-                    objs_copy.push(o);
-                }
-                *subjects_copy.get_mut(&subject).unwrap().get_mut(&predicate).unwrap() = objs_copy;
-            }
+            compress(&subject_id, &subjects, &mut subjects_copy, &mut remove,
+                     "rdf:subject", "rdf:predicate", "rdf:object");
         }
     }
 
@@ -426,10 +419,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         subjects_copy.remove(r);
     }
 
-    //println!("-----------------------------------------------------------------------");
-    //println!("{}", to_string_pretty(&subjects_copy).unwrap());
-    //println!("-----------------------------------------------------------------------");
-    return doublethick_thickvec_to_thickrdf(subjects_copy);
+    return doublethick_thickvec_to_thickrdf(&subjects_copy);
 }
 
 fn jsonify(subjects: BTreeMap<String, RDF>) {
