@@ -16,100 +16,19 @@ use rusqlite::{params, Connection, Result};
 use serde::Serialize;
 use serde_json::to_string;
 
+/// Represents a URI prefix
 #[derive(Debug)]
 struct Prefix {
     prefix: String,
     base: String,
 }
 
+/// A Complex RDF object
 #[derive(Clone, Serialize, Debug, Eq)]
 enum RDF {
     ThickVec(Vec<RDF>),
     Thick(BTreeMap<String, RDF>),
     Thin(String),
-}
-
-fn thick_thickvec_to_thickrdf(
-    ttv: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>
-) -> BTreeMap<String, RDF> {
-    let mut w = BTreeMap::new();
-    for (key, val) in ttv.iter() {
-        let val = {
-            let mut tmp = vec![];
-            for bt_map in val.iter() {
-                tmp.push(RDF::Thick(bt_map.clone()));
-            }
-            RDF::ThickVec(tmp)
-        };
-        w.insert(key.to_string(), val);
-    }
-    w
-}
-
-fn doublethick_thickvec_to_thickrdf(
-    dttv: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>
-) -> BTreeMap<String, RDF> {
-    let mut map_to_return = BTreeMap::new();
-    for (k1, v1) in dttv.iter() {
-        let mut tmp = BTreeMap::new();
-        for (k2, v2) in v1.iter() {
-            let val = {
-                let mut thick_vec = vec![];
-                for bt_map in v2.iter() {
-                    thick_vec.push(RDF::Thick(bt_map.clone()));
-                }
-                RDF::ThickVec(thick_vec)
-            };
-
-            tmp.insert(k2.to_string(), val);
-        }
-        map_to_return.insert(k1.to_string(), RDF::Thick(tmp));
-    }
-    map_to_return
-}
-
-
-impl RDF {
-    fn render(&self) -> String {
-        let mut string_to_return = String::from("");
-        match self {
-            RDF::ThickVec(v) => {
-                string_to_return.push_str("[");
-                for (i, bt_map) in v.iter().enumerate() {
-                    let thick_obj = bt_map.render();
-                    string_to_return.push_str(thick_obj.as_str());
-                    if i < (v.len() - 1) {
-                        string_to_return.push_str(",");
-                    }
-                }
-                string_to_return.push_str("]");
-            }
-            RDF::Thick(bt_map) => {
-                string_to_return.push_str("{");
-                for (j, (key, val)) in bt_map.iter().enumerate() {
-                    string_to_return.push_str(&format!("\"{}\"", key));
-                    string_to_return.push_str(": ");
-                    string_to_return.push_str(&format!("{}", val));
-                    if j < (bt_map.keys().len() - 1) {
-                        string_to_return.push_str(",");
-                    }
-                }
-                string_to_return.push_str("}");
-            },
-            RDF::Thin(s) => {
-                string_to_return.push_str("\"");
-                string_to_return.push_str(s);
-                string_to_return.push_str("\"");
-            }
-        };
-        string_to_return
-    }
-}
-
-impl fmt::Display for RDF {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.render())
-    }
 }
 
 impl Ord for RDF {
@@ -134,6 +53,95 @@ impl PartialEq for RDF {
     }
 }
 
+impl RDF {
+    /// Renders the given RDF object as a String
+    fn render(&self) -> String {
+        let mut string_to_return = String::from("");
+        match self {
+            RDF::ThickVec(v) => {
+                string_to_return.push_str("[");
+                for (i, bt_map) in v.iter().enumerate() {
+                    let thick_obj = bt_map.render();
+                    string_to_return.push_str(thick_obj.as_str());
+                    if i < (v.len() - 1) {
+                        string_to_return.push_str(",");
+                    }
+                }
+                string_to_return.push_str("]");
+            }
+            RDF::Thick(bt_map) => {
+                string_to_return.push_str("{");
+                for (j, (key, val)) in bt_map.iter().enumerate() {
+                    string_to_return.push_str(&format!("\"{}\"", key));
+                    string_to_return.push_str(":");
+                    string_to_return.push_str(&format!("{}", val));
+                    if j < (bt_map.keys().len() - 1) {
+                        string_to_return.push_str(",");
+                    }
+                }
+                string_to_return.push_str("}");
+            },
+            RDF::Thin(s) => {
+                string_to_return.push_str("\"");
+                string_to_return.push_str(s);
+                string_to_return.push_str("\"");
+            }
+        };
+        string_to_return
+    }
+}
+
+impl fmt::Display for RDF {
+    /// The default formatter for RDF objects.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.render())
+    }
+}
+
+/// Converts an object in the form of a BTreeMap from strings to vectors of the equivalent of thick
+/// RDF objects, to a BTreeMap from strings to thick RDF object equivalents.
+fn thick_thickvec_to_thickrdf(
+    ttv: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>
+) -> BTreeMap<String, RDF> {
+    let mut w = BTreeMap::new();
+    for (key, val) in ttv.iter() {
+        let val = {
+            let mut tmp = vec![];
+            for bt_map in val.iter() {
+                tmp.push(RDF::Thick(bt_map.clone()));
+            }
+            RDF::ThickVec(tmp)
+        };
+        w.insert(key.to_string(), val);
+    }
+    w
+}
+
+/// Converts an object in the form of a BTreeMap from strings to BTreeMaps from strings to vectors
+/// of thick RDF object equivalentss, to a thick RDF object equivalent.
+fn doublethick_thickvec_to_thickrdf(
+    dttv: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>
+) -> BTreeMap<String, RDF> {
+    let mut map_to_return = BTreeMap::new();
+    for (k1, v1) in dttv.iter() {
+        let mut tmp = BTreeMap::new();
+        for (k2, v2) in v1.iter() {
+            let val = {
+                let mut thick_vec = vec![];
+                for bt_map in v2.iter() {
+                    thick_vec.push(RDF::Thick(bt_map.clone()));
+                }
+                RDF::ThickVec(thick_vec)
+            };
+
+            tmp.insert(k2.to_string(), val);
+        }
+        map_to_return.insert(k1.to_string(), RDF::Thick(tmp));
+    }
+    map_to_return
+}
+
+/// Fetch all prefixes via the given connection to the database.
 fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
     let mut stmt = conn.prepare("SELECT prefix, base FROM prefix ORDER BY length(base) DESC")?;
     let mut rows = stmt.query(params![])?;
@@ -147,6 +155,8 @@ fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
     Ok(prefixes)
 }
 
+/// If the given IRI begins with a known prefix, shorten the IRI by replacing the long form of the
+/// prefix with its short form.
 fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
     for prefix in prefixes {
         if iri.starts_with(&prefix.base) {
@@ -156,6 +166,8 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
     return format!("<{}>", iri);
 }
 
+/// Given a stack of rows representing a stanza, add a new column with the given stanza name to each
+/// row and return the modified rows.
 fn thinify(
     stanza_stack: &mut Vec<Vec<Option<String>>>, stanza_name: &mut String,
 ) -> Vec<Vec<Option<String>>> {
@@ -164,7 +176,6 @@ fn thinify(
         if stanza_name == "" {
             if let Some(ref sb) = s[1] {
                 *stanza_name = sb.clone();
-                //println!("Changing stanza name to {}", stanza_name);
             }
         }
         let mut v = vec![Some(stanza_name.to_string())];
@@ -174,18 +185,21 @@ fn thinify(
     return rows;
 }
 
-fn get_column_contents(c: Option<&String>) -> String {
+/// Given an Option representing a cell from a given column of a given row, return its contents
+/// or an empty string if the cell has None.
+fn get_cell_contents(c: Option<&String>) -> String {
     match c {
         Some(s) => s.to_string(),
         None => String::from(""),
     }
 }
 
+/// Convert the given row to a thick RDF object equivalent.
 fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
-    let object = get_column_contents(row[3].as_ref());
-    let value = get_column_contents(row[4].as_ref());
-    let datatype = get_column_contents(row[5].as_ref());
-    let language = get_column_contents(row[6].as_ref());
+    let object = get_cell_contents(row[3].as_ref());
+    let value = get_cell_contents(row[4].as_ref());
+    let datatype = get_cell_contents(row[5].as_ref());
+    let language = get_cell_contents(row[6].as_ref());
 
     let mut object_map = BTreeMap::new();
     if object != "" {
@@ -208,6 +222,8 @@ fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
     return object_map;
 }
 
+/// Given a predicates map from strings to vectors of thick RDF object equivalentss, and a specific
+/// predicate, return the RDF object from the map corresponding to the given predicate.
 fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predicate: &str) -> RDF {
     let objs = predicates.get(predicate);
     match objs {
@@ -224,6 +240,57 @@ fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predi
     return RDF::Thin(String::from(""));
 }
 
+/// Given a subject id, a map of subjects to read from, a compressed map of subjects to be written
+/// to, a set of subject ids to be marked for removal, and the subject, predicate, and object types
+/// to be compressed, write a compressed version of subjects to compressed_subjects, and add the
+/// eliminated subject ids to the list of subject ids to be removed.
+fn compress(
+    subject_id: &String,
+    subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
+    compressed_subjects: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
+    remove: &mut BTreeSet<String>,
+    subject_type: &str,
+    predicate_type: &str,
+    object_type: &str
+) {
+    let preds = match subjects.get(subject_id) {
+        Some(p) => p.clone(),
+        None => BTreeMap::new()
+    };
+    let subject = format!("{}", first_object(&preds, subject_type))
+        .trim_start_matches("\"").trim_end_matches("\"").to_string();
+    let predicate = format!("{}", first_object(&preds, predicate_type))
+        .trim_start_matches("\"").trim_end_matches("\"").to_string();
+    let obj = match preds.get(object_type).and_then(|x| x.first()) {
+        Some(obj) => obj.clone(),
+        None => BTreeMap::new()
+    };
+    println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
+    compressed_subjects.get_mut(subject_id).and_then(|x| x.remove(subject_type));
+    compressed_subjects.get_mut(subject_id).and_then(|x| x.remove(predicate_type));
+    compressed_subjects.get_mut(subject_id).and_then(|x| x.remove(object_type));
+    compressed_subjects.get_mut(subject_id).and_then(|x| x.remove("rdf:type"));
+    if let Some(objs) = subjects.get(&subject).and_then(|preds| preds.get(&predicate)) {
+        let mut objs_copy = vec![];
+        for o in objs {
+            let mut o = o.clone();
+            if o == obj {
+                let new_preds = match compressed_subjects.get(subject_id) {
+                    Some(p) => thick_thickvec_to_thickrdf(&p),
+                    None => BTreeMap::new()
+                };
+                o.insert(String::from("annotations"), RDF::Thick(new_preds));
+                remove.insert(subject_id.to_string());
+            }
+            objs_copy.push(o);
+        }
+        *compressed_subjects.get_mut(&subject)
+            .and_then(|x| x.get_mut(&predicate))
+            .unwrap_or(&mut vec![]) = objs_copy;
+    }
+}
+
+/// Given a vector of thin rows, return the equivalent of a thick RDF object.
 fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> {
     let mut subjects = BTreeMap::new();
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
@@ -232,23 +299,23 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         subject_ids.insert(row[1].clone().unwrap_or(String::from("")));
     }
 
+    // Convert the given thin rows to a BTreeMap of subjects:
     for subject_id in subject_ids.iter() {
         let mut predicates = BTreeMap::new();
         for row in thin_rows.iter() {
-            if subject_id.to_string() != get_column_contents(row[1].as_ref()) {
+            if subject_id.to_string() != get_cell_contents(row[1].as_ref()) {
                 continue;
             }
 
+            // Useful closure for adding thick RDF object equivalents to a vector in sorted order:
             let add_objects_and_sort = |v: &mut Vec<_>| {
                 v.push(row2object_map(&row));
                 v.sort_by(|a, b| {
-                    let a = to_string(&a).unwrap_or(String::from(""));
-                    let b = to_string(&b).unwrap_or(String::from(""));
-                    a.cmp(&b)
+                    RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone()))
                 });
             };
 
-            let predicate = get_column_contents(row[2].as_ref());
+            let predicate = get_cell_contents(row[2].as_ref());
             if let Some(v) = predicates.get_mut(&predicate) {
                 add_objects_and_sort(v);
             }
@@ -261,7 +328,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                 println!("WARNING row {:?} has empty predicate", row);
             }
 
-            let object = get_column_contents(row[3].as_ref());
+            let object = get_cell_contents(row[3].as_ref());
             if object != "" && object.starts_with("_:") {
                 if let Some(v) = dependencies.get_mut(subject_id) {
                     v.insert(object);
@@ -335,9 +402,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                     objects.push(obj);
                 }
                 objects.sort_by(|a, b| {
-                    let a = to_string(&a).unwrap_or(String::from(""));
-                    let b = to_string(&b).unwrap_or(String::from(""));
-                    a.cmp(&b)
+                    RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone()))
                 });
                 predicates.insert(predicate.to_string(), objects);
                 subjects.insert(subject_id.to_string(), predicates.clone());
@@ -348,54 +413,9 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         }
     }
 
-    fn compress(
-        subject_id: &String,
-        subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
-        subjects_copy: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
-        remove: &mut BTreeSet<String>,
-        subject_type: &str,
-        predicate_type: &str,
-        object_type: &str
-    ) {
-        let preds = match subjects.get(subject_id) {
-            Some(p) => p.clone(),
-            None => BTreeMap::new()
-        };
-        let mut subject = format!("{}", first_object(&preds, subject_type));
-        subject = subject.trim_start_matches("\"").trim_end_matches("\"").to_string();
-        let mut predicate = format!("{}", first_object(&preds, predicate_type));
-        predicate = predicate.trim_start_matches("\"").trim_end_matches("\"").to_string();
-        let obj = match preds.get(object_type).and_then(|x| x.first()) {
-            Some(obj) => obj.clone(),
-            None => BTreeMap::new()
-        };
-        println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
-        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(subject_type));
-        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(predicate_type));
-        subjects_copy.get_mut(subject_id).and_then(|x| x.remove(object_type));
-        subjects_copy.get_mut(subject_id).and_then(|x| x.remove("rdf:type"));
-        if let Some(objs) = subjects.get(&subject).and_then(|preds| preds.get(&predicate)) {
-            let mut objs_copy = vec![];
-            for o in objs {
-                let mut o = o.clone();
-                if o == obj {
-                    let new_preds = match subjects_copy.get(subject_id) {
-                        Some(p) => thick_thickvec_to_thickrdf(&p),
-                        None => BTreeMap::new()
-                    };
-                    o.insert(String::from("annotations"), RDF::Thick(new_preds));
-                    remove.insert(subject_id.to_string());
-                }
-                objs_copy.push(o);
-            }
-            *subjects_copy.get_mut(&subject)
-                .and_then(|x| x.get_mut(&predicate))
-                .unwrap_or(&mut vec![]) = objs_copy;
-        }
-    }
-
+    // OWL annotation and RDF reification:
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
-    let mut subjects_copy = subjects.clone();
+    let mut compressed_subjects = subjects.clone();
     for subject_id in subjects.keys() {
         let subject_id = subject_id.to_string();
         let preds = match subjects.get(&subject_id) {
@@ -404,61 +424,23 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
         };
         if preds.contains_key("owl:annotatedSource") {
             println!("OWL annotation {}", subject_id);
-            compress(&subject_id, &subjects, &mut subjects_copy, &mut remove,
+            compress(&subject_id, &subjects, &mut compressed_subjects, &mut remove,
                      "owl:annotatedSource", "owl:annotatedProperty", "owl:annotatedTarget");
         }
 
         if preds.contains_key("rdf:subject") {
             println!("RDF Reification {}", subject_id);
-            compress(&subject_id, &subjects, &mut subjects_copy, &mut remove,
+            compress(&subject_id, &subjects, &mut compressed_subjects, &mut remove,
                      "rdf:subject", "rdf:predicate", "rdf:object");
         }
     }
 
+    // Remove the subject ids from compressed_subjects that we earlier identified for removal:
     for r in remove.iter() {
-        subjects_copy.remove(r);
+        compressed_subjects.remove(r);
     }
 
-    return doublethick_thickvec_to_thickrdf(&subjects_copy);
-}
-
-fn jsonify(subjects: BTreeMap<String, RDF>) {
-    print!("{{");
-    for (i, (k1, v1)) in subjects.iter().enumerate() {
-        print!("\"{}\":{{", k1);
-        let empty_map = BTreeMap::new();
-        let v1 = match v1 {
-            RDF::Thick(bt_map) => bt_map,
-            _ => &empty_map,
-        };
-
-        for (j, (k2, v2)) in v1.iter().enumerate() {
-            let empty = vec![];
-            let v2 = match v2 {
-                RDF::ThickVec(v) => v,
-                _ => &empty,
-            };
-            print!("\"{}\": ", k2);
-            let v2 = RDF::ThickVec(v2.to_vec());
-            print!("{}{}", v2, {
-                if j < (v1.keys().len() - 1) {
-                    ","
-                }
-                else {
-                    ""
-                }
-            });
-        }
-        print!("}}{}", {
-            if i < (subjects.keys().len() - 1) {
-                ","
-            }
-            else {
-                ""
-            }
-        });
-    }
-    print!("}}");
+    return doublethick_thickvec_to_thickrdf(&compressed_subjects);
 }
 
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
@@ -497,8 +479,6 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let filename = format!("file:{}", db);
     let mut thin_rows: Vec<_> = vec![];
     RdfXmlParser::new(stdin.lock(), filename.as_str())
-        // TODO: Check with James if it would be better to replace the call to unwrap() with a
-        // more robust error handling mechanism.
         .unwrap()
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
@@ -557,12 +537,10 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
             }
             Ok(()) as Result<(), RdfXmlError>
         })
-        // TODO: Check with James if it would be better to replace the call to unwrap() with a
-        // more robust error handling mechanism.
         .unwrap();
 
     let subjects = thin2subjects(&thin_rows);
-    jsonify(subjects);
+    println!("{}", RDF::Thick(subjects));
 
     // TODO
     //thickify(subjects);
