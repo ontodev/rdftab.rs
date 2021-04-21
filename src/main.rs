@@ -26,9 +26,9 @@ struct Prefix {
 /// A Complex RDF object
 #[derive(Clone, Serialize, Debug, Eq)]
 enum RDF {
-    ThickVec(Vec<RDF>),
-    Thick(BTreeMap<String, RDF>),
-    Thin(String),
+    NestedVec(Vec<RDF>),
+    NestedMap(BTreeMap<String, RDF>),
+    Flat(String),
 }
 
 impl Ord for RDF {
@@ -58,7 +58,7 @@ impl RDF {
     fn render(&self) -> String {
         let mut string_to_return = String::from("");
         match self {
-            RDF::ThickVec(v) => {
+            RDF::NestedVec(v) => {
                 string_to_return.push_str("[");
                 for (i, bt_map) in v.iter().enumerate() {
                     let thick_obj = bt_map.render();
@@ -69,7 +69,7 @@ impl RDF {
                 }
                 string_to_return.push_str("]");
             }
-            RDF::Thick(bt_map) => {
+            RDF::NestedMap(bt_map) => {
                 string_to_return.push_str("{");
                 for (j, (key, val)) in bt_map.iter().enumerate() {
                     string_to_return.push_str(&format!("\"{}\"", key));
@@ -81,7 +81,7 @@ impl RDF {
                 }
                 string_to_return.push_str("}");
             }
-            RDF::Thin(s) => {
+            RDF::Flat(s) => {
                 string_to_return.push_str("\"");
                 string_to_return.push_str(s);
                 string_to_return.push_str("\"");
@@ -108,9 +108,9 @@ fn thick_thickvec_to_thickrdf(
         let val = {
             let mut tmp = vec![];
             for bt_map in val.iter() {
-                tmp.push(RDF::Thick(bt_map.clone()));
+                tmp.push(RDF::NestedMap(bt_map.clone()));
             }
-            RDF::ThickVec(tmp)
+            RDF::NestedVec(tmp)
         };
         w.insert(key.to_string(), val);
     }
@@ -129,14 +129,14 @@ fn doublethick_thickvec_to_thickrdf(
             let val = {
                 let mut thick_vec = vec![];
                 for bt_map in v2.iter() {
-                    thick_vec.push(RDF::Thick(bt_map.clone()));
+                    thick_vec.push(RDF::NestedMap(bt_map.clone()));
                 }
-                RDF::ThickVec(thick_vec)
+                RDF::NestedVec(thick_vec)
             };
 
             tmp.insert(k2.to_string(), val);
         }
-        map_to_return.insert(k1.to_string(), RDF::Thick(tmp));
+        map_to_return.insert(k1.to_string(), RDF::NestedMap(tmp));
     }
     map_to_return
 }
@@ -204,13 +204,13 @@ fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
 
     let mut object_map = BTreeMap::new();
     if object != "" {
-        object_map.insert(String::from("object"), RDF::Thin(object));
+        object_map.insert(String::from("object"), RDF::Flat(object));
     } else if value != "" {
-        object_map.insert(String::from("value"), RDF::Thin(value));
+        object_map.insert(String::from("value"), RDF::Flat(value));
         if datatype != "" {
-            object_map.insert(String::from("datatype"), RDF::Thin(datatype));
+            object_map.insert(String::from("datatype"), RDF::Flat(datatype));
         } else if language != "" {
-            object_map.insert(String::from("language"), RDF::Thin(language));
+            object_map.insert(String::from("language"), RDF::Flat(language));
         }
     } else {
         // TODO: The python code throws an exception here. Should we do something similar?
@@ -235,7 +235,7 @@ fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predi
             }
         }
     };
-    return RDF::Thin(String::from(""));
+    return RDF::Flat(String::from(""));
 }
 
 /// Given a subject id, a map of subjects to read from, a compressed map of subjects to be written
@@ -292,7 +292,7 @@ fn compress(
                     Some(p) => thick_thickvec_to_thickrdf(&p),
                     None => BTreeMap::new(),
                 };
-                o.insert(String::from("annotations"), RDF::Thick(new_preds));
+                o.insert(String::from("annotations"), RDF::NestedMap(new_preds));
                 remove.insert(subject_id.to_string());
             }
             objs_copy.push(o);
@@ -324,7 +324,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
             // Useful closure for adding thick RDF object equivalents to a vector in sorted order:
             let add_objects_and_sort = |v: &mut Vec<_>| {
                 v.push(row2object_map(&row));
-                v.sort_by(|a, b| RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone())));
+                v.sort_by(|a, b| RDF::NestedMap(a.clone()).cmp(&RDF::NestedMap(b.clone())));
             };
 
             let predicate = get_cell_contents(row[2].as_ref());
@@ -372,20 +372,20 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                 let mut objects = vec![];
                 for obj in predicates.get(&predicate).unwrap_or(&vec![]) {
                     let mut obj = obj.clone();
-                    let empty_obj = RDF::Thin(String::from(""));
+                    let empty_obj = RDF::Flat(String::from(""));
                     let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
                     let o = o.clone();
                     match o {
-                        RDF::ThickVec(_) => {}
-                        RDF::Thick(_) => {}
-                        RDF::Thin(o) => {
+                        RDF::NestedVec(_) => {}
+                        RDF::NestedMap(_) => {}
+                        RDF::Flat(o) => {
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
                                     let object_val = {
                                         if let Some(o) = subjects.get(&o) {
-                                            RDF::Thick(thick_thickvec_to_thickrdf(&o))
+                                            RDF::NestedMap(thick_thickvec_to_thickrdf(&o))
                                         } else {
-                                            RDF::Thick(BTreeMap::new())
+                                            RDF::NestedMap(BTreeMap::new())
                                         }
                                     };
                                     obj.clear();
@@ -393,11 +393,11 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                                     handled.insert(o);
                                 } else {
                                     if let Some(v) = dependencies.get_mut(&subject_id) {
-                                        // We expect o to be a RDF::Thin
+                                        // We expect o to be a RDF::Flat
                                         v.insert(format!("{}", o));
                                     } else {
                                         let mut v = BTreeSet::new();
-                                        // We expect o to be a RDF::Thin
+                                        // We expect o to be a RDF::Flat
                                         v.insert(format!("{}", o));
                                         dependencies.insert(subject_id.to_string(), v);
                                     }
@@ -407,7 +407,7 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
                     }
                     objects.push(obj);
                 }
-                objects.sort_by(|a, b| RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone())));
+                objects.sort_by(|a, b| RDF::NestedMap(a.clone()).cmp(&RDF::NestedMap(b.clone())));
                 predicates.insert(predicate.to_string(), objects);
                 subjects.insert(subject_id.to_string(), predicates.clone());
             }
@@ -461,6 +461,49 @@ fn thin2subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> 
     return doublethick_thickvec_to_thickrdf(&compressed_subjects);
 }
 
+/// Convert a nested subjects map to thick flat rows.
+fn subjects2thick(subjects: &BTreeMap<String, RDF>) -> Vec<BTreeMap<String, RDF>> {
+    let mut rows = vec![];
+    for subject_id in subjects.keys() {
+        let predicates = match subjects.get(subject_id) {
+            Some(p) => match p {
+                RDF::NestedMap(p) => p.clone(),
+                _ => BTreeMap::new(),
+            },
+            None => BTreeMap::new(),
+        };
+        for predicate in predicates.keys() {
+            let objs = match predicates.get(predicate) {
+                Some(o) => match o {
+                    RDF::NestedVec(o) => o.clone(),
+                    _ => vec![],
+                },
+                None => vec![],
+            };
+            for obj in objs {
+                let mut result = match obj {
+                    RDF::NestedMap(o) => o,
+                    _ => BTreeMap::new(),
+                };
+                result.insert(String::from("subject"), RDF::Flat(subject_id.clone()));
+                result.insert(String::from("predicate"), RDF::Flat(predicate.clone()));
+                match result.get(&String::from("object")) {
+                    Some(s) => match s {
+                        RDF::Flat(_) => (),
+                        _ => {
+                            let s = format!("{}", s).replace("\"", "\\\"");
+                            result.insert(String::from("object"), RDF::Flat(s.to_string()));
+                        }
+                    },
+                    None => (),
+                };
+                rows.push(result);
+            }
+        }
+    }
+    return rows;
+}
+
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let stanza_end = NamedOrBlankNode::from(NamedNode {
         iri: "http://example.com/stanza-end",
@@ -484,7 +527,6 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let tx = conn.transaction()?;
     tx.execute(
         "CREATE TABLE IF NOT EXISTS statements (
-      stanza TEXT,
       subject TEXT,
       predicate TEXT,
       object TEXT,
@@ -557,14 +599,33 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         .unwrap();
 
     let subjects = thin2subjects(&thin_rows);
-    println!("{}", RDF::Thick(subjects));
+    let thick_rows = subjects2thick(&subjects);
+    let rows_to_insert = {
+        let mut rows = vec![];
+        for t in &thick_rows {
+            let mut row = vec![];
+            for column in vec![
+                "subject",
+                "predicate",
+                "object",
+                "value",
+                "datatype",
+                "language",
+            ] {
+                match t.get(column) {
+                    Some(RDF::Flat(s)) => row.push(Some(s)),
+                    None => row.push(None),
+                    _ => (),
+                };
+            }
+            rows.push(row);
+        }
+        rows
+    };
 
-    // TODO
-    //thickify(subjects);
-
-    for row in thin_rows {
+    for row in rows_to_insert {
         let mut stmt = tx
-            .prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
+            .prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6)")
             .expect("Statement ok");
         stmt.execute(row).expect("Insert row");
     }
