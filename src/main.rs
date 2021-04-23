@@ -23,15 +23,15 @@ struct Prefix {
     base: String,
 }
 
-/// A Complex RDF object
+/// A custom datatype that is useful for passing information about a given stanza between functions:
 #[derive(Clone, Serialize, Debug, Eq)]
-enum RDF {
-    List(Vec<RDF>),
-    Thick(BTreeMap<String, RDF>),
-    Thin(String),
+enum HandyEnum {
+    VecOf(Vec<HandyEnum>),
+    MapTo(BTreeMap<String, HandyEnum>),
+    Flat(String),
 }
 
-impl Ord for RDF {
+impl Ord for HandyEnum {
     fn cmp(&self, other: &Self) -> Ordering {
         let a = to_string(self).unwrap_or(String::from(""));
         let b = to_string(other).unwrap_or(String::from(""));
@@ -39,13 +39,13 @@ impl Ord for RDF {
     }
 }
 
-impl PartialOrd for RDF {
+impl PartialOrd for HandyEnum {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for RDF {
+impl PartialEq for HandyEnum {
     fn eq(&self, other: &Self) -> bool {
         let a = to_string(self).unwrap_or(String::from(""));
         let b = to_string(other).unwrap_or(String::from(""));
@@ -53,23 +53,23 @@ impl PartialEq for RDF {
     }
 }
 
-impl RDF {
-    /// Renders the given RDF object as a String
+impl HandyEnum {
+    /// Renders the given HandyEnum object as a String
     fn render(&self) -> String {
         let mut string_to_return = String::from("");
         match self {
-            RDF::List(v) => {
+            HandyEnum::VecOf(v) => {
                 string_to_return.push_str("[");
                 for (i, bt_map) in v.iter().enumerate() {
-                    let thick_obj = bt_map.render();
-                    string_to_return.push_str(thick_obj.as_str());
+                    let nested_obj = bt_map.render();
+                    string_to_return.push_str(nested_obj.as_str());
                     if i < (v.len() - 1) {
                         string_to_return.push_str(",");
                     }
                 }
                 string_to_return.push_str("]");
             }
-            RDF::Thick(bt_map) => {
+            HandyEnum::MapTo(bt_map) => {
                 string_to_return.push_str("{");
                 for (j, (key, val)) in bt_map.iter().enumerate() {
                     string_to_return.push_str(&format!("\"{}\"", key));
@@ -81,7 +81,7 @@ impl RDF {
                 }
                 string_to_return.push_str("}");
             }
-            RDF::Thin(s) => {
+            HandyEnum::Flat(s) => {
                 string_to_return.push_str("\"");
                 string_to_return.push_str(s);
                 string_to_return.push_str("\"");
@@ -91,54 +91,55 @@ impl RDF {
     }
 }
 
-impl fmt::Display for RDF {
-    /// The default formatter for RDF objects.
+impl fmt::Display for HandyEnum {
+    /// The default formatter for HandyEnum objects.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.render())
     }
 }
 
-/// Converts an object in the form of a BTreeMap mapping strings to vectors of thick RDF objects,
-/// to a BTreeMap mapping strings to thick RDF objects.
-fn thick_thicklist_to_thickrdf(
-    ttv: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>,
-) -> BTreeMap<String, RDF> {
-    let mut w = BTreeMap::new();
-    for (key, val) in ttv.iter() {
+/// Converts an object in the form of a BTreeMap mapping strings to vectors of BTreeMaps mapping
+/// strings to HandyEnum objects, into BTreeMap mapping strings to HandyEnums.
+fn nest_handy_enum(
+    exposed: &BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>,
+) -> BTreeMap<String, HandyEnum> {
+    let mut nest = BTreeMap::new();
+    for (key, val) in exposed.iter() {
         let val = {
             let mut tmp = vec![];
             for bt_map in val.iter() {
-                tmp.push(RDF::Thick(bt_map.clone()));
+                tmp.push(HandyEnum::MapTo(bt_map.clone()));
             }
-            RDF::List(tmp)
+            HandyEnum::VecOf(tmp)
         };
-        w.insert(key.to_string(), val);
+        nest.insert(key.to_string(), val);
     }
-    w
+    nest
 }
 
 /// Converts an object in the form of a BTreeMap mapping strings to BTreeMaps mapping strings to
-/// vectors of thick objects, to a thick RDF object equivalent.
-fn doublethick_thicklist_to_thickrdf(
-    dttv: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
-) -> BTreeMap<String, RDF> {
-    let mut map_to_return = BTreeMap::new();
-    for (k1, v1) in dttv.iter() {
+/// vectors of BTreeMaps mapping strings to HandyEnum objects, into a BTreeMap mapping strings to
+/// HandyEnums.
+fn double_nest_handy_enum(
+    double_exposed: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
+) -> BTreeMap<String, HandyEnum> {
+    let mut double_nest = BTreeMap::new();
+    for (k1, v1) in double_exposed.iter() {
         let mut tmp = BTreeMap::new();
         for (k2, v2) in v1.iter() {
             let val = {
-                let mut thick_vec = vec![];
+                let mut handy_vec = vec![];
                 for bt_map in v2.iter() {
-                    thick_vec.push(RDF::Thick(bt_map.clone()));
+                    handy_vec.push(HandyEnum::MapTo(bt_map.clone()));
                 }
-                RDF::List(thick_vec)
+                HandyEnum::VecOf(handy_vec)
             };
 
             tmp.insert(k2.to_string(), val);
         }
-        map_to_return.insert(k1.to_string(), RDF::Thick(tmp));
+        double_nest.insert(k1.to_string(), HandyEnum::MapTo(tmp));
     }
-    map_to_return
+    double_nest
 }
 
 /// Fetch all prefixes via the given connection to the database.
@@ -195,8 +196,8 @@ fn get_cell_contents(c: Option<&String>) -> String {
     }
 }
 
-/// Convert the given row to a thick RDF object equivalent.
-fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
+/// Convert the given row to a map from strings to HandyEnums.
+fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, HandyEnum> {
     let object = get_cell_contents(row[3].as_ref());
     let value = get_cell_contents(row[4].as_ref());
     let datatype = get_cell_contents(row[5].as_ref());
@@ -204,25 +205,26 @@ fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, RDF> {
 
     let mut object_map = BTreeMap::new();
     if object != "" {
-        object_map.insert(String::from("object"), RDF::Thin(object));
-    } else if value != "" {
-        object_map.insert(String::from("value"), RDF::Thin(value));
-        if datatype != "" {
-            object_map.insert(String::from("datatype"), RDF::Thin(datatype));
-        } else if language != "" {
-            object_map.insert(String::from("language"), RDF::Thin(language));
-        }
+        object_map.insert(String::from("object"), HandyEnum::Flat(object));
     } else {
-        // TODO: The python code throws an exception here. Should we do something similar?
-        println!("ERROR: Invalid RDF row");
+        object_map.insert(String::from("value"), HandyEnum::Flat(value));
+        if datatype != "" {
+            object_map.insert(String::from("datatype"), HandyEnum::Flat(datatype));
+        } else if language != "" {
+            object_map.insert(String::from("language"), HandyEnum::Flat(language));
+        }
     }
 
     return object_map;
 }
 
-/// Given a predicates map from strings to vectors of thick RDF object equivalents, and a specific
-/// predicate, return the RDF object from the map corresponding to the given predicate.
-fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predicate: &str) -> RDF {
+/// Given a map (representing predicates) from strings to vectors of BTreeMaps mapping strings to
+/// HandyEnums, and a specific predicate represented by a string slice, return a HandyEnum
+/// representing the first object contained in the predicates map.
+fn first_object(
+    predicates: &BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>,
+    predicate: &str,
+) -> HandyEnum {
     let objs = predicates.get(predicate);
     match objs {
         None => (),
@@ -235,7 +237,7 @@ fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predi
             }
         }
     };
-    return RDF::Thin(String::from(""));
+    return HandyEnum::Flat(String::from(""));
 }
 
 /// Given a subject id, a map of subjects to read from, a compressed map of subjects to be written
@@ -244,8 +246,8 @@ fn first_object(predicates: &BTreeMap<String, Vec<BTreeMap<String, RDF>>>, predi
 /// eliminated subject ids to the list of subject ids to be removed.
 fn compress(
     subject_id: &String,
-    subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
-    compressed_subjects: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, RDF>>>>,
+    subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
+    compressed_subjects: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
     remove: &mut BTreeSet<String>,
     subject_type: &str,
     predicate_type: &str,
@@ -289,10 +291,10 @@ fn compress(
             let mut o = o.clone();
             if o == obj {
                 let new_preds = match compressed_subjects.get(subject_id) {
-                    Some(p) => thick_thicklist_to_thickrdf(&p),
+                    Some(p) => nest_handy_enum(&p),
                     None => BTreeMap::new(),
                 };
-                o.insert(String::from("annotations"), RDF::Thick(new_preds));
+                o.insert(String::from("annotations"), HandyEnum::MapTo(new_preds));
                 remove.insert(subject_id.to_string());
             }
             objs_copy.push(o);
@@ -304,8 +306,8 @@ fn compress(
     }
 }
 
-/// Given a vector of thin rows, return the equivalent of a thick RDF object.
-fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, RDF> {
+/// Given a vector of thin rows, return a map from Strings to HandyEnums
+fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, HandyEnum> {
     let mut subjects = BTreeMap::new();
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
     let mut subject_ids: BTreeSet<String> = vec![].into_iter().collect();
@@ -314,17 +316,19 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
     }
 
     // Convert the given thin rows to a BTreeMap of subjects:
-    for subject_id in subject_ids.iter() {
+    println!("Converting subject ids to subjects map ...");
+    let somewhat = subject_ids.len();
+    for (i, subject_id) in subject_ids.iter().enumerate() {
         let mut predicates = BTreeMap::new();
         for row in thin_rows.iter() {
             if subject_id.to_string() != get_cell_contents(row[1].as_ref()) {
                 continue;
             }
 
-            // Useful closure for adding thick RDF object equivalents to a vector in sorted order:
+            // Useful closure for adding nested HandyEnums to a vector in sorted order:
             let add_objects_and_sort = |v: &mut Vec<_>| {
                 v.push(row2object_map(&row));
-                v.sort_by(|a, b| RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone())));
+                v.sort_by(|a, b| HandyEnum::MapTo(a.clone()).cmp(&HandyEnum::MapTo(b.clone())));
             };
 
             let predicate = get_cell_contents(row[2].as_ref());
@@ -350,9 +354,13 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
             }
         }
         subjects.insert(subject_id.to_string(), predicates);
+        if i != 0 && (i % 500) == 0 {
+            println!("Converted {} subject ids ({} total) ...", i + 1, somewhat);
+        }
     }
 
     // Work from leaves to root, nesting the blank structures:
+    println!("Working through dependencies ...");
     while !dependencies.is_empty() {
         let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
         for leaf in subjects.keys() {
@@ -363,41 +371,58 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        for subject_id in subjects.keys().map(|s| s.to_string()).collect::<Vec<_>>() {
-            let mut predicates = subjects
-                .get(&subject_id)
-                .unwrap_or(&BTreeMap::new())
-                .clone();
-            for predicate in predicates.keys().map(|s| s.to_string()).collect::<Vec<_>>() {
+        let somewhat = subjects.keys().len();
+        for (i, subject_id) in subjects
+            .keys()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .iter()
+            .enumerate()
+        {
+            let mut predicates = subjects.get(subject_id).unwrap_or(&BTreeMap::new()).clone();
+            let funwhat = predicates.keys().len();
+            for (j, predicate) in predicates
+                .keys()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .iter()
+                .enumerate()
+            {
                 let mut objects = vec![];
-                for obj in predicates.get(&predicate).unwrap_or(&vec![]) {
+                let gunwhat = predicates.get(predicate).unwrap_or(&vec![]).len();
+                for (k, obj) in predicates
+                    .get(predicate)
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .enumerate()
+                {
                     let mut obj = obj.clone();
-                    let empty_obj = RDF::Thin(String::from(""));
+                    let empty_obj = HandyEnum::Flat(String::from(""));
                     let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
                     let o = o.clone();
                     match o {
-                        RDF::List(_) => {}
-                        RDF::Thick(_) => {}
-                        RDF::Thin(o) => {
+                        HandyEnum::VecOf(_) => {}
+                        HandyEnum::MapTo(_) => {}
+                        HandyEnum::Flat(o) => {
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
                                     let object_val = {
                                         if let Some(o) = subjects.get(&o) {
-                                            RDF::Thick(thick_thicklist_to_thickrdf(&o))
+                                            HandyEnum::MapTo(nest_handy_enum(&o))
                                         } else {
-                                            RDF::Thick(BTreeMap::new())
+                                            HandyEnum::MapTo(BTreeMap::new())
                                         }
                                     };
                                     obj.clear();
                                     obj.insert(String::from("object"), object_val);
                                     handled.insert(o);
                                 } else {
-                                    if let Some(v) = dependencies.get_mut(&subject_id) {
-                                        // We expect o to be a RDF::Thin
+                                    if let Some(v) = dependencies.get_mut(subject_id) {
+                                        // We expect o to be a HandyEnum::Flat
                                         v.insert(format!("{}", o));
                                     } else {
                                         let mut v = BTreeSet::new();
-                                        // We expect o to be a RDF::Thin
+                                        // We expect o to be a HandyEnum::Flat
                                         v.insert(format!("{}", o));
                                         dependencies.insert(subject_id.to_string(), v);
                                     }
@@ -406,10 +431,20 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
                         }
                     }
                     objects.push(obj);
+                    if k != 0 && (k % 100) == 0 {
+                        println!("Converted {} objects ({} total) ...", k + 1, gunwhat);
+                    }
                 }
-                objects.sort_by(|a, b| RDF::Thick(a.clone()).cmp(&RDF::Thick(b.clone())));
+                objects
+                    .sort_by(|a, b| HandyEnum::MapTo(a.clone()).cmp(&HandyEnum::MapTo(b.clone())));
                 predicates.insert(predicate.to_string(), objects);
                 subjects.insert(subject_id.to_string(), predicates.clone());
+                if j != 0 && (j % 100) == 0 {
+                    println!("Converted {} predicates ({} total) ...", j + 1, funwhat);
+                }
+            }
+            if i != 0 && (i % 100) == 0 {
+                println!("Converted {} subject ids ({} total) ...", i + 1, somewhat);
             }
         }
         for subject_id in &handled {
@@ -417,7 +452,8 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
         }
     }
 
-    // OWL annotation and RDF reification:
+    // OWL annotation and HandyEnum reification:
+    println!("Doing OWL annotation and HandyEnum reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut compressed_subjects = subjects.clone();
     for subject_id in subjects.keys() {
@@ -458,16 +494,19 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
         compressed_subjects.remove(r);
     }
 
-    return doublethick_thicklist_to_thickrdf(&compressed_subjects);
+    return double_nest_handy_enum(&compressed_subjects);
 }
 
-/// Convert a nested subjects map to rows of thick RDF objects.
-fn subjects_to_thick_rows(subjects: &BTreeMap<String, RDF>) -> Vec<BTreeMap<String, RDF>> {
+/// Convert a BTreeMap, `subjects`, from Strings to HandyEnums, into a vector of BTreeMaps that map
+/// Strings to HandyEnums.
+fn subjects_to_thick_rows(
+    subjects: &BTreeMap<String, HandyEnum>,
+) -> Vec<BTreeMap<String, HandyEnum>> {
     let mut rows = vec![];
     for subject_id in subjects.keys() {
         let predicates = match subjects.get(subject_id) {
             Some(p) => match p {
-                RDF::Thick(p) => p.clone(),
+                HandyEnum::MapTo(p) => p.clone(),
                 _ => BTreeMap::new(),
             },
             None => BTreeMap::new(),
@@ -475,24 +514,27 @@ fn subjects_to_thick_rows(subjects: &BTreeMap<String, RDF>) -> Vec<BTreeMap<Stri
         for predicate in predicates.keys() {
             let objs = match predicates.get(predicate) {
                 Some(o) => match o {
-                    RDF::List(o) => o.clone(),
+                    HandyEnum::VecOf(o) => o.clone(),
                     _ => vec![],
                 },
                 None => vec![],
             };
             for obj in objs {
                 let mut result = match obj {
-                    RDF::Thick(o) => o,
+                    HandyEnum::MapTo(o) => o,
                     _ => BTreeMap::new(),
                 };
-                result.insert(String::from("subject"), RDF::Thin(subject_id.clone()));
-                result.insert(String::from("predicate"), RDF::Thin(predicate.clone()));
+                result.insert(String::from("subject"), HandyEnum::Flat(subject_id.clone()));
+                result.insert(
+                    String::from("predicate"),
+                    HandyEnum::Flat(predicate.clone()),
+                );
                 match result.get(&String::from("object")) {
                     Some(s) => match s {
-                        RDF::Thin(_) => (),
+                        HandyEnum::Flat(_) => (),
                         _ => {
                             let s = format!("{}", s).replace("\"", "\\\"");
-                            result.insert(String::from("object"), RDF::Thin(s.to_string()));
+                            result.insert(String::from("object"), HandyEnum::Flat(s.to_string()));
                         }
                     },
                     None => (),
@@ -538,6 +580,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     )?;
     let filename = format!("file:{}", db);
     let mut thin_rows: Vec<_> = vec![];
+    println!("Parsing thin rows ...");
     RdfXmlParser::new(stdin.lock(), filename.as_str())
         .unwrap()
         .parse_all(&mut |t| {
@@ -598,7 +641,9 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
 
+    println!("Converting thin rows to subjects ...");
     let subjects = thin_rows_to_subjects(&thin_rows);
+    println!("Converting subjects to thick rows ...");
     let thick_rows = subjects_to_thick_rows(&subjects);
     let rows_to_insert = {
         let mut rows = vec![];
@@ -613,7 +658,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                 "language",
             ] {
                 match t.get(column) {
-                    Some(RDF::Thin(s)) => row.push(Some(s)),
+                    Some(HandyEnum::Flat(s)) => row.push(Some(s)),
                     None => row.push(None),
                     _ => (),
                 };
@@ -623,6 +668,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         rows
     };
 
+    println!("Inserting thick rows to db ...");
     for row in rows_to_insert {
         let mut stmt = tx
             .prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6)")
