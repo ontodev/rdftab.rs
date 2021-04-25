@@ -1,9 +1,7 @@
 // Based on https://docs.rs/csv/1.1.3/csv/tutorial/index.html
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
-use std::fmt;
 use std::io;
 use std::process;
 
@@ -13,133 +11,17 @@ use rio_xml::{RdfXmlError, RdfXmlParser};
 
 use rusqlite::{params, Connection, Result};
 
-use serde::Serialize;
-use serde_json::to_string;
+use serde_json::{
+    // SerdeMap by default backed by BTreeMap (see https://docs.serde.rs/serde_json/map/index.html)
+    Map as SerdeMap,
+    Value as SerdeValue,
+};
 
 /// Represents a URI prefix
 #[derive(Debug)]
 struct Prefix {
     prefix: String,
     base: String,
-}
-
-/// A custom datatype that is useful for passing information about a given stanza between functions:
-#[derive(Clone, Serialize, Debug, Eq)]
-enum HandyEnum {
-    VecOf(Vec<HandyEnum>),
-    MapTo(BTreeMap<String, HandyEnum>),
-    Flat(String),
-}
-
-impl Ord for HandyEnum {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let a = to_string(self).unwrap_or(String::from(""));
-        let b = to_string(other).unwrap_or(String::from(""));
-        a.cmp(&b)
-    }
-}
-
-impl PartialOrd for HandyEnum {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for HandyEnum {
-    fn eq(&self, other: &Self) -> bool {
-        let a = to_string(self).unwrap_or(String::from(""));
-        let b = to_string(other).unwrap_or(String::from(""));
-        a == b
-    }
-}
-
-impl HandyEnum {
-    /// Renders the given HandyEnum object as a String
-    fn render(&self) -> String {
-        let mut string_to_return = String::from("");
-        match self {
-            HandyEnum::VecOf(v) => {
-                string_to_return.push_str("[");
-                for (i, bt_map) in v.iter().enumerate() {
-                    let nested_obj = bt_map.render();
-                    string_to_return.push_str(nested_obj.as_str());
-                    if i < (v.len() - 1) {
-                        string_to_return.push_str(",");
-                    }
-                }
-                string_to_return.push_str("]");
-            }
-            HandyEnum::MapTo(bt_map) => {
-                string_to_return.push_str("{");
-                for (j, (key, val)) in bt_map.iter().enumerate() {
-                    string_to_return.push_str(&format!("\"{}\"", key));
-                    string_to_return.push_str(":");
-                    string_to_return.push_str(&format!("{}", val));
-                    if j < (bt_map.keys().len() - 1) {
-                        string_to_return.push_str(",");
-                    }
-                }
-                string_to_return.push_str("}");
-            }
-            HandyEnum::Flat(s) => {
-                string_to_return.push_str("\"");
-                string_to_return.push_str(s);
-                string_to_return.push_str("\"");
-            }
-        };
-        string_to_return
-    }
-}
-
-impl fmt::Display for HandyEnum {
-    /// The default formatter for HandyEnum objects.
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.render())
-    }
-}
-
-/// Converts an object in the form of a BTreeMap mapping strings to vectors of BTreeMaps mapping
-/// strings to HandyEnum objects, into BTreeMap mapping strings to HandyEnums.
-fn nest_handy_enum(
-    exposed: &BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>,
-) -> BTreeMap<String, HandyEnum> {
-    let mut nest = BTreeMap::new();
-    for (key, val) in exposed.iter() {
-        let val = {
-            let mut tmp = vec![];
-            for bt_map in val.iter() {
-                tmp.push(HandyEnum::MapTo(bt_map.clone()));
-            }
-            HandyEnum::VecOf(tmp)
-        };
-        nest.insert(key.to_string(), val);
-    }
-    nest
-}
-
-/// Converts an object in the form of a BTreeMap mapping strings to BTreeMaps mapping strings to
-/// vectors of BTreeMaps mapping strings to HandyEnum objects, into a BTreeMap mapping strings to
-/// HandyEnums.
-fn double_nest_handy_enum(
-    double_exposed: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
-) -> BTreeMap<String, HandyEnum> {
-    let mut double_nest = BTreeMap::new();
-    for (k1, v1) in double_exposed.iter() {
-        let mut tmp = BTreeMap::new();
-        for (k2, v2) in v1.iter() {
-            let val = {
-                let mut handy_vec = vec![];
-                for bt_map in v2.iter() {
-                    handy_vec.push(HandyEnum::MapTo(bt_map.clone()));
-                }
-                HandyEnum::VecOf(handy_vec)
-            };
-
-            tmp.insert(k2.to_string(), val);
-        }
-        double_nest.insert(k1.to_string(), HandyEnum::MapTo(tmp));
-    }
-    double_nest
 }
 
 /// Fetch all prefixes via the given connection to the database.
@@ -196,67 +78,70 @@ fn get_cell_contents(c: Option<&String>) -> String {
     }
 }
 
-/// Convert the given row to a map from strings to HandyEnums.
-fn row2object_map(row: &Vec<Option<String>>) -> BTreeMap<String, HandyEnum> {
+/// Convert the given row to a SerdeValue
+fn row2object_map(row: &Vec<Option<String>>) -> SerdeValue {
     let object = get_cell_contents(row[3].as_ref());
     let value = get_cell_contents(row[4].as_ref());
     let datatype = get_cell_contents(row[5].as_ref());
     let language = get_cell_contents(row[6].as_ref());
 
-    let mut object_map = BTreeMap::new();
+    let mut object_map = SerdeMap::new();
     if object != "" {
-        object_map.insert(String::from("object"), HandyEnum::Flat(object));
+        object_map.insert(String::from("object"), SerdeValue::String(object));
     } else {
-        object_map.insert(String::from("value"), HandyEnum::Flat(value));
+        object_map.insert(String::from("value"), SerdeValue::String(value));
         if datatype != "" {
-            object_map.insert(String::from("datatype"), HandyEnum::Flat(datatype));
+            object_map.insert(String::from("datatype"), SerdeValue::String(datatype));
         } else if language != "" {
-            object_map.insert(String::from("language"), HandyEnum::Flat(language));
+            object_map.insert(String::from("language"), SerdeValue::String(language));
         }
     }
 
-    return object_map;
+    return SerdeValue::Object(object_map);
 }
 
-/// Given a map (representing predicates) from strings to vectors of BTreeMaps mapping strings to
-/// HandyEnums, and a specific predicate represented by a string slice, return a HandyEnum
-/// representing the first object contained in the predicates map.
-fn first_object(
-    predicates: &BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>,
-    predicate: &str,
-) -> HandyEnum {
+/// Given a SerdeMap mapping strings to SerdeValues, and a specific predicate represented by a
+/// string slice, return a SerdeValue representing the first object contained in the predicates map.
+fn first_object(predicates: &SerdeMap<String, SerdeValue>, predicate: &str) -> SerdeValue {
     let objs = predicates.get(predicate);
     match objs {
         None => (),
-        Some(objs) => {
-            for obj in objs.iter() {
-                match obj.get("object") {
-                    None => (),
-                    Some(o) => return o.clone(),
-                };
+        Some(objs) => match objs {
+            SerdeValue::Array(v) => {
+                for obj in v.iter() {
+                    match obj.get("object") {
+                        None => (),
+                        Some(o) => return o.clone(),
+                    };
+                }
             }
-        }
+            _ => (),
+        },
     };
-    return HandyEnum::Flat(String::from(""));
+    return SerdeValue::String(String::from(""));
 }
 
-/// Given a subject id, a map of subjects to read from, a compressed map of subjects to be written
-/// to, a set of subject ids to be marked for removal, and the subject, predicate, and object types
-/// to be compressed, write a compressed version of subjects to compressed_subjects, and add the
-/// eliminated subject ids to the list of subject ids to be removed.
+/// Given a subject id, a map representing subjects, a map that compressed versions of the subjects
+/// map will be copied to, a set of subject ids to be marked for removal, and the subject,
+/// predicate, and object types to be compressed, write a compressed version of subjects to
+/// compressed_subjects, and add the eliminated subject ids to the list of those marked for removal.
 fn compress(
     subject_id: &String,
-    subjects: &BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
-    compressed_subjects: &mut BTreeMap<String, BTreeMap<String, Vec<BTreeMap<String, HandyEnum>>>>,
+    subjects: &SerdeMap<String, SerdeValue>,
+    compressed_subjects: &mut SerdeMap<String, SerdeValue>,
     remove: &mut BTreeSet<String>,
     subject_type: &str,
     predicate_type: &str,
     object_type: &str,
 ) {
     let preds = match subjects.get(subject_id) {
-        Some(p) => p.clone(),
-        None => BTreeMap::new(),
+        Some(p) => match p {
+            SerdeValue::Object(m) => m.clone(),
+            _ => SerdeMap::new(),
+        },
+        None => SerdeMap::new(),
     };
+
     let subject = format!("{}", first_object(&preds, subject_type))
         .trim_start_matches("\"")
         .trim_end_matches("\"")
@@ -265,24 +150,50 @@ fn compress(
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
-    let obj = match preds.get(object_type).and_then(|x| x.first()) {
+    let empty_vec = vec![];
+    let obj = match preds.get(object_type).and_then(|x| {
+        let x = match x {
+            SerdeValue::Array(v) => v,
+            _ => &empty_vec,
+        };
+        x.first()
+    }) {
         Some(obj) => obj.clone(),
-        None => BTreeMap::new(),
+        None => SerdeValue::Object(SerdeMap::new()),
     };
+
     println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
-    compressed_subjects
-        .get_mut(subject_id)
-        .and_then(|x| x.remove(subject_type));
-    compressed_subjects
-        .get_mut(subject_id)
-        .and_then(|x| x.remove(predicate_type));
-    compressed_subjects
-        .get_mut(subject_id)
-        .and_then(|x| x.remove(object_type));
-    compressed_subjects
-        .get_mut(subject_id)
-        .and_then(|x| x.remove("rdf:type"));
-    if let Some(objs) = subjects
+
+    let result = compressed_subjects.get_mut(subject_id);
+    match result {
+        Some(SerdeValue::Object(m)) => {
+            m.remove(subject_type);
+        }
+        _ => (),
+    };
+    let result = compressed_subjects.get_mut(subject_id);
+    match result {
+        Some(SerdeValue::Object(m)) => {
+            m.remove(predicate_type);
+        }
+        _ => (),
+    };
+    let result = compressed_subjects.get_mut(subject_id);
+    match result {
+        Some(SerdeValue::Object(m)) => {
+            m.remove(object_type);
+        }
+        _ => (),
+    };
+    let result = compressed_subjects.get_mut(subject_id);
+    match result {
+        Some(SerdeValue::Object(m)) => {
+            m.remove("rdf:type");
+        }
+        _ => (),
+    };
+
+    if let Some(SerdeValue::Array(objs)) = subjects
         .get(&subject)
         .and_then(|preds| preds.get(&predicate))
     {
@@ -291,51 +202,63 @@ fn compress(
             let mut o = o.clone();
             if o == obj {
                 let new_preds = match compressed_subjects.get(subject_id) {
-                    Some(p) => nest_handy_enum(&p),
-                    None => BTreeMap::new(),
+                    Some(p) => p.clone(),
+                    None => SerdeValue::Object(SerdeMap::new()),
                 };
-                o.insert(String::from("annotations"), HandyEnum::MapTo(new_preds));
+                let mut m = match o {
+                    SerdeValue::Object(m) => m.clone(),
+                    _ => SerdeMap::new(),
+                };
+                m.insert(String::from("annotations"), new_preds);
+                let m = SerdeValue::Object(m);
+                o = m;
                 remove.insert(subject_id.to_string());
             }
             objs_copy.push(o);
         }
-        *compressed_subjects
-            .get_mut(&subject)
-            .and_then(|x| x.get_mut(&predicate))
-            .unwrap_or(&mut vec![]) = objs_copy;
+
+        // This code is ugly but it is working. TODO: make it less ugly.
+        let mut empty_array = SerdeValue::Array(vec![]);
+        let preds_tmp = compressed_subjects.get_mut(&subject);
+        let objs_tmp = match preds_tmp {
+            Some(SerdeValue::Object(m)) => m.get_mut(&predicate),
+            _ => Some(&mut empty_array),
+        };
+        *objs_tmp.unwrap() = SerdeValue::Array(objs_copy);
     }
 }
 
-/// Given a vector of thin rows, return a map from Strings to HandyEnums
-fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<String, HandyEnum> {
-    let mut subjects = BTreeMap::new();
+/// Given a vector of thin rows, return a map from Strings to SerdeValues
+fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<String, SerdeValue> {
+    let mut subjects = SerdeMap::new();
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
     let mut subject_ids: BTreeSet<String> = vec![].into_iter().collect();
     for row in thin_rows.iter() {
         subject_ids.insert(row[1].clone().unwrap_or(String::from("")));
     }
 
-    // Convert the given thin rows to a BTreeMap of subjects:
     println!("Converting subject ids to subjects map ...");
-    let somewhat = subject_ids.len();
+    let num_subjs = subject_ids.len();
     for (i, subject_id) in subject_ids.iter().enumerate() {
-        let mut predicates = BTreeMap::new();
+        let mut predicates = SerdeMap::new();
         for row in thin_rows.iter() {
             if subject_id.to_string() != get_cell_contents(row[1].as_ref()) {
                 continue;
             }
 
-            // Useful closure for adding nested HandyEnums to a vector in sorted order:
-            let add_objects_and_sort = |v: &mut Vec<_>| {
-                v.push(row2object_map(&row));
-                v.sort_by(|a, b| HandyEnum::MapTo(a.clone()).cmp(&HandyEnum::MapTo(b.clone())));
+            // Useful closure
+            let add_objects_and_sort = |v: &mut SerdeValue| {
+                if let SerdeValue::Array(v) = v {
+                    v.push(row2object_map(&row));
+                    v.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+                }
             };
 
             let predicate = get_cell_contents(row[2].as_ref());
             if let Some(v) = predicates.get_mut(&predicate) {
                 add_objects_and_sort(v);
             } else if predicate != "" {
-                let mut v = vec![];
+                let mut v = SerdeValue::Array(vec![]);
                 add_objects_and_sort(&mut v);
                 predicates.insert(predicate, v);
             } else {
@@ -353,9 +276,10 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
                 }
             }
         }
-        subjects.insert(subject_id.to_string(), predicates);
+
+        subjects.insert(subject_id.to_string(), SerdeValue::Object(predicates));
         if i != 0 && (i % 500) == 0 {
-            println!("Converted {} subject ids ({} total) ...", i + 1, somewhat);
+            println!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
         }
     }
 
@@ -371,7 +295,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        let somewhat = subjects.keys().len();
+        let num_subjs = subjects.keys().len();
         for (i, subject_id) in subjects
             .keys()
             .map(|s| s.to_string())
@@ -379,8 +303,16 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
             .iter()
             .enumerate()
         {
-            let mut predicates = subjects.get(subject_id).unwrap_or(&BTreeMap::new()).clone();
-            let funwhat = predicates.keys().len();
+            let empty_map = SerdeMap::new();
+            let predicates = match subjects.get(subject_id) {
+                Some(p) => match p {
+                    SerdeValue::Object(m) => m,
+                    _ => &empty_map,
+                },
+                None => &empty_map,
+            };
+            let mut predicates = predicates.clone();
+            let num_preds = predicates.keys().len();
             for (j, predicate) in predicates
                 .keys()
                 .map(|s| s.to_string())
@@ -388,63 +320,69 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
                 .iter()
                 .enumerate()
             {
+                let empty_vec = vec![];
+                let pred_objs = {
+                    match predicates.get(predicate) {
+                        Some(o) => match o {
+                            SerdeValue::Array(v) => v,
+                            _ => &empty_vec,
+                        },
+                        None => &empty_vec,
+                    }
+                };
+                let num_pred_objs = pred_objs.len();
                 let mut objects = vec![];
-                let gunwhat = predicates.get(predicate).unwrap_or(&vec![]).len();
-                for (k, obj) in predicates
-                    .get(predicate)
-                    .unwrap_or(&vec![])
-                    .iter()
-                    .enumerate()
-                {
+                for (k, obj) in pred_objs.iter().enumerate() {
                     let mut obj = obj.clone();
-                    let empty_obj = HandyEnum::Flat(String::from(""));
+                    let empty_obj = SerdeValue::Object(SerdeMap::new());
                     let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
                     let o = o.clone();
                     match o {
-                        HandyEnum::VecOf(_) => {}
-                        HandyEnum::MapTo(_) => {}
-                        HandyEnum::Flat(o) => {
+                        SerdeValue::String(o) => {
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
+                                    let empty_obj = SerdeValue::Object(SerdeMap::new());
                                     let object_val = {
-                                        if let Some(o) = subjects.get(&o) {
-                                            HandyEnum::MapTo(nest_handy_enum(&o))
-                                        } else {
-                                            HandyEnum::MapTo(BTreeMap::new())
+                                        match subjects.get(&o) {
+                                            Some(o) => o,
+                                            None => &empty_obj,
                                         }
                                     };
-                                    obj.clear();
-                                    obj.insert(String::from("object"), object_val);
-                                    handled.insert(o);
+                                    if let SerdeValue::Object(ref mut m) = obj {
+                                        m.clear();
+                                        m.insert(String::from("object"), object_val.clone());
+                                        handled.insert(o);
+                                    }
                                 } else {
                                     if let Some(v) = dependencies.get_mut(subject_id) {
-                                        // We expect o to be a HandyEnum::Flat
-                                        v.insert(format!("{}", o));
+                                        v.insert(o);
                                     } else {
                                         let mut v = BTreeSet::new();
-                                        // We expect o to be a HandyEnum::Flat
-                                        v.insert(format!("{}", o));
+                                        v.insert(o);
                                         dependencies.insert(subject_id.to_string(), v);
                                     }
                                 }
                             }
                         }
+                        _ => (),
                     }
                     objects.push(obj);
                     if k != 0 && (k % 100) == 0 {
-                        println!("Converted {} objects ({} total) ...", k + 1, gunwhat);
+                        println!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
                     }
                 }
-                objects
-                    .sort_by(|a, b| HandyEnum::MapTo(a.clone()).cmp(&HandyEnum::MapTo(b.clone())));
-                predicates.insert(predicate.to_string(), objects);
-                subjects.insert(subject_id.to_string(), predicates.clone());
+                objects.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+                predicates.insert(predicate.to_string(), SerdeValue::Array(objects));
+                subjects.insert(
+                    subject_id.to_string(),
+                    SerdeValue::Object(predicates.clone()),
+                );
                 if j != 0 && (j % 100) == 0 {
-                    println!("Converted {} predicates ({} total) ...", j + 1, funwhat);
+                    println!("Converted {} predicates ({} total) ...", j + 1, num_preds);
                 }
             }
             if i != 0 && (i % 100) == 0 {
-                println!("Converted {} subject ids ({} total) ...", i + 1, somewhat);
+                println!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
             }
         }
         for subject_id in &handled {
@@ -452,15 +390,18 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
         }
     }
 
-    // OWL annotation and HandyEnum reification:
-    println!("Doing OWL annotation and HandyEnum reification ...");
+    // OWL annotation and RDF reification:
+    println!("Doing OWL annotation and RDF reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut compressed_subjects = subjects.clone();
     for subject_id in subjects.keys() {
         let subject_id = subject_id.to_string();
         let preds = match subjects.get(&subject_id) {
-            Some(p) => p.clone(),
-            None => BTreeMap::new(),
+            Some(p) => match p {
+                SerdeValue::Object(m) => m.clone(),
+                _ => SerdeMap::new(),
+            },
+            None => SerdeMap::new(),
         };
         if preds.contains_key("owl:annotatedSource") {
             println!("OWL annotation {}", subject_id);
@@ -494,47 +435,48 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> BTreeMap<Strin
         compressed_subjects.remove(r);
     }
 
-    return double_nest_handy_enum(&compressed_subjects);
+    compressed_subjects
 }
 
-/// Convert a BTreeMap, `subjects`, from Strings to HandyEnums, into a vector of BTreeMaps that map
-/// Strings to HandyEnums.
+/// Convert a SerdeMap, `subjects`, from Strings to SerdeValues, into a vector of SerdeMaps that map
+/// Strings to SerdeValues.
 fn subjects_to_thick_rows(
-    subjects: &BTreeMap<String, HandyEnum>,
-) -> Vec<BTreeMap<String, HandyEnum>> {
+    subjects: &SerdeMap<String, SerdeValue>,
+) -> Vec<SerdeMap<String, SerdeValue>> {
     let mut rows = vec![];
     for subject_id in subjects.keys() {
+        let empty_map = SerdeMap::new();
         let predicates = match subjects.get(subject_id) {
-            Some(p) => match p {
-                HandyEnum::MapTo(p) => p.clone(),
-                _ => BTreeMap::new(),
-            },
-            None => BTreeMap::new(),
+            Some(SerdeValue::Object(p)) => p,
+            _ => &empty_map,
         };
+
         for predicate in predicates.keys() {
+            let empty_vec = vec![];
             let objs = match predicates.get(predicate) {
-                Some(o) => match o {
-                    HandyEnum::VecOf(o) => o.clone(),
-                    _ => vec![],
-                },
-                None => vec![],
+                Some(SerdeValue::Array(v)) => v,
+                _ => &empty_vec,
             };
             for obj in objs {
+                let empty_map = SerdeMap::new();
                 let mut result = match obj {
-                    HandyEnum::MapTo(o) => o,
-                    _ => BTreeMap::new(),
+                    SerdeValue::Object(m) => m.clone(),
+                    _ => empty_map,
                 };
-                result.insert(String::from("subject"), HandyEnum::Flat(subject_id.clone()));
+                result.insert(
+                    String::from("subject"),
+                    SerdeValue::String(subject_id.clone()),
+                );
                 result.insert(
                     String::from("predicate"),
-                    HandyEnum::Flat(predicate.clone()),
+                    SerdeValue::String(predicate.clone()),
                 );
-                match result.get(&String::from("object")) {
+                match result.get("object") {
                     Some(s) => match s {
-                        HandyEnum::Flat(_) => (),
+                        SerdeValue::String(_) => (),
                         _ => {
-                            let s = format!("{}", s).replace("\"", "\\\"");
-                            result.insert(String::from("object"), HandyEnum::Flat(s.to_string()));
+                            let s = s.to_string();
+                            result.insert(String::from("object"), SerdeValue::String(s));
                         }
                     },
                     None => (),
@@ -543,7 +485,94 @@ fn subjects_to_thick_rows(
             }
         }
     }
-    return rows;
+    rows
+}
+
+// TODO: using mutable global variables in this way requires the use of `unsafe` code blocks.
+// We should find an alternative.
+/// Given a predicates map, return a list of triples
+static mut B_ID: usize = 0;
+fn predmap2ttls(pred_map: &SerdeMap<String, SerdeValue>) -> Vec<SerdeValue> {
+    println!(
+        "In predmap2ttls. Received: {}",
+        SerdeValue::Object(pred_map.clone())
+    );
+    unsafe {
+        B_ID += 1;
+        let bnode = format!("_:myb{}", B_ID);
+        let mut ttls = vec![];
+        for (predicate, objects) in pred_map.iter() {
+            if let SerdeValue::Array(v) = objects {
+                for obj in v {
+                    if let SerdeValue::Object(m) = obj {
+                        let obj = thick2obj(&m);
+                        let mut tmp = SerdeMap::new();
+                        tmp.insert(String::from("subject"), SerdeValue::String(bnode.clone()));
+                        tmp.insert(
+                            String::from("predicate"),
+                            SerdeValue::String(predicate.clone()),
+                        );
+                        tmp.insert(String::from("object"), obj.clone());
+                        let tmp = SerdeValue::Object(tmp);
+                        ttls.push(tmp);
+                    }
+                }
+            }
+        }
+        return ttls;
+    }
+}
+
+/// Given a thick row, convert it to a SerdeValue and return it.
+fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
+    println!(
+        "In thick2obj. Received thick row: {}",
+        SerdeValue::Object(thick_row.clone())
+    );
+    match thick_row.get("object") {
+        Some(SerdeValue::String(s)) => return SerdeValue::String(s.to_string()),
+        Some(SerdeValue::Object(m)) => return SerdeValue::Array(predmap2ttls(m)),
+        _ => (),
+    };
+
+    for key in vec!["value", "datatype", "language"] {
+        match thick_row.get(key) {
+            Some(val) => return SerdeValue::String(format!("{}", val)),
+            _ => (),
+        }
+    }
+
+    // TODO: This shouldn't happen. Should we raise an exception?
+    eprintln!("ERROR!! {:?}", thick_row);
+    return SerdeValue::String("".to_string());
+}
+
+/// Given a list of thick rows, convert it to a list of triples and return it.
+fn thick2ttl(thick_rows: &Vec<SerdeMap<String, SerdeValue>>) -> Vec<SerdeValue> {
+    println!("In thick2ttl. Received thick_rows: {:?}", thick_rows);
+    let mut triples = vec![];
+    for row in thick_rows {
+        let mut row = row.clone();
+        match row.get("object") {
+            Some(SerdeValue::String(s)) => {
+                if s.starts_with("{") {
+                    let val: SerdeValue = serde_json::from_str(s).unwrap();
+                    row.insert(String::from("object"), val);
+                }
+            }
+            _ => (),
+        };
+        let obj = thick2obj(&row);
+        let subj = row.get("subject").unwrap();
+        let pred = row.get("predicate").unwrap();
+        let mut triple = SerdeMap::new();
+        triple.insert(String::from("subject"), subj.clone());
+        triple.insert(String::from("predicate"), pred.clone());
+        triple.insert(String::from("object"), obj);
+        let triple = SerdeValue::Object(triple);
+        triples.push(triple);
+    }
+    triples
 }
 
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
@@ -643,8 +672,14 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
 
     println!("Converting thin rows to subjects ...");
     let subjects = thin_rows_to_subjects(&thin_rows);
+    println!("{}", SerdeValue::Object(subjects.clone()));
     println!("Converting subjects to thick rows ...");
     let thick_rows = subjects_to_thick_rows(&subjects);
+    println!("THICK ROWS:");
+    for row in thick_rows.clone() {
+        println!("{}", SerdeValue::Object(row));
+    }
+
     let rows_to_insert = {
         let mut rows = vec![];
         for t in &thick_rows {
@@ -658,7 +693,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                 "language",
             ] {
                 match t.get(column) {
-                    Some(HandyEnum::Flat(s)) => row.push(Some(s)),
+                    Some(SerdeValue::String(s)) => row.push(Some(s)),
                     None => row.push(None),
                     _ => (),
                 };
@@ -669,6 +704,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     };
 
     println!("Inserting thick rows to db ...");
+
     for row in rows_to_insert {
         let mut stmt = tx
             .prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6)")
@@ -677,6 +713,10 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     }
 
     tx.commit()?;
+
+    let triples = thick2ttl(&thick_rows);
+    println!("TRIPLES: {}", SerdeValue::Array(triples));
+
     Ok(())
 }
 
