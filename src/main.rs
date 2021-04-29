@@ -52,14 +52,15 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
 /// Given a stack of rows representing a stanza, add a new column with the given stanza name to each
 /// row and return the modified rows.
 fn thinify(
-    stanza_stack: &mut Vec<Vec<Option<String>>>,
-    stanza_name: &mut String,
+    stanza_stack: &Vec<Vec<Option<String>>>,
+    stanza_name: &String,
 ) -> Vec<Vec<Option<String>>> {
     let mut rows = vec![];
+    let mut stanza_name = stanza_name.to_string();
     for s in stanza_stack.iter() {
         if stanza_name == "" {
             if let Some(ref sb) = s[1] {
-                *stanza_name = sb.clone();
+                stanza_name = sb.clone();
             }
         }
         let mut v = vec![Some(stanza_name.to_string())];
@@ -78,7 +79,7 @@ fn get_cell_contents(c: Option<&String>) -> String {
     }
 }
 
-/// Convert the given row to a SerdeValue
+/// Convert the given row to a SerdeValue::Object
 fn row2object_map(row: &Vec<Option<String>>) -> SerdeValue {
     let object = get_cell_contents(row[3].as_ref());
     let value = get_cell_contents(row[4].as_ref());
@@ -134,64 +135,42 @@ fn compress(
     predicate_type: &str,
     object_type: &str,
 ) {
-    let preds = match subjects.get(subject_id) {
-        Some(p) => match p {
-            SerdeValue::Object(m) => m.clone(),
-            _ => SerdeMap::new(),
-        },
-        None => SerdeMap::new(),
+    let preds: SerdeMap<String, SerdeValue>;
+    match subjects.get(subject_id) {
+        Some(SerdeValue::Object(m)) => preds = m.clone(),
+        _ => preds = SerdeMap::new(),
     };
 
     let subject = format!("{}", first_object(&preds, subject_type))
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
+
     let predicate = format!("{}", first_object(&preds, predicate_type))
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
-    let empty_vec = vec![];
-    let obj = match preds.get(object_type).and_then(|x| {
-        let x = match x {
-            SerdeValue::Array(v) => v,
-            _ => &empty_vec,
-        };
-        x.first()
-    }) {
-        Some(obj) => obj.clone(),
-        None => SerdeValue::Object(SerdeMap::new()),
+
+    let obj: SerdeValue;
+    match preds.get(object_type) {
+        Some(SerdeValue::Array(v)) => {
+            if let Some(o) = v.first() {
+                obj = o.clone()
+            } else {
+                obj = SerdeValue::Object(SerdeMap::new())
+            }
+        }
+        _ => obj = SerdeValue::Object(SerdeMap::new()),
     };
 
     println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
 
-    let result = compressed_subjects.get_mut(subject_id);
-    match result {
-        Some(SerdeValue::Object(m)) => {
-            m.remove(subject_type);
-        }
-        _ => (),
-    };
-    let result = compressed_subjects.get_mut(subject_id);
-    match result {
-        Some(SerdeValue::Object(m)) => {
-            m.remove(predicate_type);
-        }
-        _ => (),
-    };
-    let result = compressed_subjects.get_mut(subject_id);
-    match result {
-        Some(SerdeValue::Object(m)) => {
-            m.remove(object_type);
-        }
-        _ => (),
-    };
-    let result = compressed_subjects.get_mut(subject_id);
-    match result {
-        Some(SerdeValue::Object(m)) => {
-            m.remove("rdf:type");
-        }
-        _ => (),
-    };
+    if let Some(SerdeValue::Object(m)) = compressed_subjects.get_mut(subject_id) {
+        m.remove(subject_type);
+        m.remove(predicate_type);
+        m.remove(object_type);
+        m.remove("rdf:type");
+    }
 
     if let Some(SerdeValue::Array(objs)) = subjects
         .get(&subject)
@@ -210,14 +189,13 @@ fn compress(
                     _ => SerdeMap::new(),
                 };
                 m.insert(String::from("annotations"), new_preds);
-                let m = SerdeValue::Object(m);
-                o = m;
+                o = SerdeValue::Object(m);
                 remove.insert(subject_id.to_string());
             }
             objs_copy.push(o);
         }
 
-        // This code is ugly but it is working. TODO: make it less ugly.
+        // TODO: Make this code less ugly:
         let mut empty_array = SerdeValue::Array(vec![]);
         let preds_tmp = compressed_subjects.get_mut(&subject);
         let objs_tmp = match preds_tmp {
@@ -246,15 +224,19 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                 continue;
             }
 
-            // Useful closure
+            let object_map = row2object_map(&row);
+            // Useful closure for adding SerdeValues to a list in sorted order:
             let add_objects_and_sort = |v: &mut SerdeValue| {
                 if let SerdeValue::Array(v) = v {
-                    v.push(row2object_map(&row));
+                    v.push(object_map);
                     v.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
                 }
             };
 
             let predicate = get_cell_contents(row[2].as_ref());
+            // If the given predicate is already associated with a list in the predicates map,
+            // then add the objects represented by `row` to the list in sorted order, otherwise
+            // add an empty list corresponding to the predicate in the map.
             if let Some(v) = predicates.get_mut(&predicate) {
                 add_objects_and_sort(v);
             } else if predicate != "" {
@@ -266,6 +248,9 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
             }
 
             let object = get_cell_contents(row[3].as_ref());
+            // If the object is a blank node, then if a set corresponding to `subject_id` already
+            // exists in the dependencies map, add the object to it; otherwise add an empty list
+            // corresponding to the subject in the map.
             if object != "" && object.starts_with("_:") {
                 if let Some(v) = dependencies.get_mut(subject_id) {
                     v.insert(object);
@@ -277,13 +262,14 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
             }
         }
 
+        // Add an entry mapping `subject_id` to the predicates map in the subjects map:
         subjects.insert(subject_id.to_string(), SerdeValue::Object(predicates));
         if i != 0 && (i % 500) == 0 {
             println!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
         }
     }
 
-    // Work from leaves to root, nesting the blank structures:
+    // Work through dependencies from leaves to root, nesting the blank structures:
     println!("Working through dependencies ...");
     while !dependencies.is_empty() {
         let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
@@ -303,15 +289,12 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
             .iter()
             .enumerate()
         {
-            let empty_map = SerdeMap::new();
-            let predicates = match subjects.get(subject_id) {
-                Some(p) => match p {
-                    SerdeValue::Object(m) => m,
-                    _ => &empty_map,
-                },
-                None => &empty_map,
+            let mut predicates: SerdeMap<String, SerdeValue>;
+            match subjects.get(subject_id) {
+                Some(SerdeValue::Object(m)) => predicates = m.clone(),
+                _ => predicates = SerdeMap::new(),
             };
-            let mut predicates = predicates.clone();
+
             let num_preds = predicates.keys().len();
             for (j, predicate) in predicates
                 .keys()
@@ -320,37 +303,37 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                 .iter()
                 .enumerate()
             {
-                let empty_vec = vec![];
-                let pred_objs = {
-                    match predicates.get(predicate) {
-                        Some(o) => match o {
-                            SerdeValue::Array(v) => v,
-                            _ => &empty_vec,
-                        },
-                        None => &empty_vec,
-                    }
+                let pred_objs: Vec<SerdeValue>;
+                match predicates.get(predicate) {
+                    Some(SerdeValue::Array(v)) => pred_objs = v.clone(),
+                    _ => pred_objs = vec![],
                 };
+
                 let num_pred_objs = pred_objs.len();
                 let mut objects = vec![];
                 for (k, obj) in pred_objs.iter().enumerate() {
                     let mut obj = obj.clone();
-                    let empty_obj = SerdeValue::Object(SerdeMap::new());
-                    let o = obj.get(&String::from("object")).unwrap_or(&empty_obj);
-                    let o = o.clone();
+                    let o: SerdeValue;
+                    if let Some(val) = obj.get(&String::from("object")) {
+                        o = val.clone();
+                    } else {
+                        o = SerdeValue::Object(SerdeMap::new());
+                    }
+
                     match o {
                         SerdeValue::String(o) => {
                             if o.starts_with("_:") {
                                 if leaves.contains(&o) {
-                                    let empty_obj = SerdeValue::Object(SerdeMap::new());
-                                    let object_val = {
-                                        match subjects.get(&o) {
-                                            Some(o) => o,
-                                            None => &empty_obj,
-                                        }
-                                    };
+                                    let val: SerdeValue;
+                                    if let Some(v) = subjects.get(&o) {
+                                        val = v.clone();
+                                    } else {
+                                        val = SerdeValue::Object(SerdeMap::new());
+                                    }
+
                                     if let SerdeValue::Object(ref mut m) = obj {
                                         m.clear();
-                                        m.insert(String::from("object"), object_val.clone());
+                                        m.insert(String::from("object"), val.clone());
                                         handled.insert(o);
                                     }
                                 } else {
@@ -396,13 +379,12 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     let mut compressed_subjects = subjects.clone();
     for subject_id in subjects.keys() {
         let subject_id = subject_id.to_string();
-        let preds = match subjects.get(&subject_id) {
-            Some(p) => match p {
-                SerdeValue::Object(m) => m.clone(),
-                _ => SerdeMap::new(),
-            },
-            None => SerdeMap::new(),
+        let preds: SerdeMap<String, SerdeValue>;
+        match subjects.get(&subject_id) {
+            Some(SerdeValue::Object(m)) => preds = m.clone(),
+            _ => preds = SerdeMap::new(),
         };
+
         if preds.contains_key("owl:annotatedSource") {
             println!("OWL annotation {}", subject_id);
             compress(
