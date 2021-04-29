@@ -420,30 +420,31 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     compressed_subjects
 }
 
-/// Convert a SerdeMap, `subjects`, from Strings to SerdeValues, into a vector of SerdeMaps that map
+/// Convert the given SerdeMap, mapping Strings to SerdeValues, into a vector of SerdeMaps that map
 /// Strings to SerdeValues.
 fn subjects_to_thick_rows(
     subjects: &SerdeMap<String, SerdeValue>,
 ) -> Vec<SerdeMap<String, SerdeValue>> {
     let mut rows = vec![];
     for subject_id in subjects.keys() {
-        let empty_map = SerdeMap::new();
-        let predicates = match subjects.get(subject_id) {
-            Some(SerdeValue::Object(p)) => p,
-            _ => &empty_map,
+        let predicates: SerdeMap<String, SerdeValue>;
+        match subjects.get(subject_id) {
+            Some(SerdeValue::Object(p)) => predicates = p.clone(),
+            _ => predicates = SerdeMap::new(),
         };
 
         for predicate in predicates.keys() {
-            let empty_vec = vec![];
-            let objs = match predicates.get(predicate) {
-                Some(SerdeValue::Array(v)) => v,
-                _ => &empty_vec,
+            let objs: Vec<SerdeValue>;
+            match predicates.get(predicate) {
+                Some(SerdeValue::Array(v)) => objs = v.clone(),
+                _ => objs = vec![],
             };
+
             for obj in objs {
-                let empty_map = SerdeMap::new();
-                let mut result = match obj {
-                    SerdeValue::Object(m) => m.clone(),
-                    _ => empty_map,
+                let mut result: SerdeMap<String, SerdeValue>;
+                match obj {
+                    SerdeValue::Object(m) => result = m.clone(),
+                    _ => result = SerdeMap::new(),
                 };
                 result.insert(
                     String::from("subject"),
@@ -453,16 +454,15 @@ fn subjects_to_thick_rows(
                     String::from("predicate"),
                     SerdeValue::String(predicate.clone()),
                 );
-                match result.get("object") {
-                    Some(s) => match s {
+                if let Some(s) = result.get("object") {
+                    match s {
                         SerdeValue::String(_) => (),
                         _ => {
                             let s = s.to_string();
                             result.insert(String::from("object"), SerdeValue::String(s));
                         }
-                    },
-                    None => (),
-                };
+                    };
+                }
                 rows.push(result);
             }
         }
@@ -517,6 +517,7 @@ fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
         _ => (),
     };
 
+    // TODO: do this differently (see slack)
     for key in vec!["value", "datatype", "language"] {
         match thick_row.get(key) {
             Some(val) => return SerdeValue::String(format!("{}", val)),
