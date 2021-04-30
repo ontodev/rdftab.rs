@@ -517,12 +517,17 @@ fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
         _ => (),
     };
 
-    // TODO: do this differently (see slack)
-    for key in vec!["value", "datatype", "language"] {
-        match thick_row.get(key) {
-            Some(val) => return SerdeValue::String(format!("{}", val)),
-            _ => (),
+    match thick_row.get("value") {
+        Some(SerdeValue::String(v)) => {
+            if let Some(SerdeValue::String(t)) = thick_row.get("datatype") {
+                return SerdeValue::String(format!("\"{}\"^^{}", v, t));
+            }
+            if let Some(SerdeValue::String(l)) = thick_row.get("language") {
+                return SerdeValue::String(format!("\"{}\"@{}", v, l));
+            }
+            return SerdeValue::String(format!("{}", v));
         }
+        _ => (),
     }
 
     // TODO: This shouldn't happen. Should we raise an exception?
