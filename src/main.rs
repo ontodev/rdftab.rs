@@ -127,43 +127,29 @@ fn first_object(predicates: &SerdeMap<String, SerdeValue>, predicate: &str) -> S
 /// predicate, and object types to be compressed, write a compressed version of subjects to
 /// compressed_subjects, and add the eliminated subject ids to the list of those marked for removal.
 fn compress(
+    kind: &str,
     subject_id: &String,
     subjects: &SerdeMap<String, SerdeValue>,
     compressed_subjects: &mut SerdeMap<String, SerdeValue>,
     remove: &mut BTreeSet<String>,
+    preds: &SerdeMap<String, SerdeValue>,
     subject_type: &str,
     predicate_type: &str,
     object_type: &str,
 ) {
-    let preds: SerdeMap<String, SerdeValue>;
-    match subjects.get(subject_id) {
-        Some(SerdeValue::Object(m)) => preds = m.clone(),
-        _ => preds = SerdeMap::new(),
-    };
-
     let subject = format!("{}", first_object(&preds, subject_type))
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
-
     let predicate = format!("{}", first_object(&preds, predicate_type))
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
-
-    let obj: SerdeValue;
-    match preds.get(object_type) {
-        Some(SerdeValue::Array(v)) => {
-            if let Some(o) = v.first() {
-                obj = o.clone()
-            } else {
-                obj = SerdeValue::Object(SerdeMap::new())
-            }
-        }
-        _ => obj = SerdeValue::Object(SerdeMap::new()),
-    };
-
-    println!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
+    let obj = format!("{}", first_object(&preds, object_type))
+        .trim_start_matches("\"")
+        .trim_end_matches("\"")
+        .to_string();
+    eprintln!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
 
     if let Some(SerdeValue::Object(m)) = compressed_subjects.get_mut(subject_id) {
         m.remove(subject_type);
@@ -172,14 +158,46 @@ fn compress(
         m.remove("rdf:type");
     }
 
-    if let Some(SerdeValue::Array(objs)) = subjects
+    if let None = compressed_subjects.get(&subject) {
+        let preds: SerdeMap<String, SerdeValue>;
+        match subjects.get(&subject) {
+            Some(SerdeValue::Object(m)) => preds = m.clone(),
+            _ => preds = SerdeMap::new(),
+        };
+        compressed_subjects.insert(subject.to_string(), SerdeValue::Object(preds));
+    }
+    // We are assured compressed_preds will not be None because of the code immediately above, so
+    // we simply call unwrap() here:
+    let compressed_preds = compressed_subjects.get_mut(&subject).unwrap();
+    if let None = compressed_preds.get(&predicate) {
+        let compressed_objs: SerdeValue;
+        match preds.get(&predicate) {
+            Some(SerdeValue::Object(p)) => compressed_objs = SerdeValue::Object(p.clone()),
+            _ => compressed_objs = SerdeValue::Object(SerdeMap::new()),
+        };
+        if let SerdeValue::Object(m) = compressed_preds {
+            m.insert(predicate.to_string(), compressed_objs);
+        }
+    }
+
+    if let Some(SerdeValue::Array(objs)) = compressed_subjects
         .get(&subject)
         .and_then(|preds| preds.get(&predicate))
     {
         let mut objs_copy = vec![];
         for o in objs {
             let mut o = o.clone();
-            if o == obj {
+            let o_obj: String;
+            match o.get("object") {
+                Some(s) => {
+                    o_obj = format!("{}", s)
+                        .trim_start_matches("\"")
+                        .trim_end_matches("\"")
+                        .to_string()
+                }
+                None => o_obj = String::from(""),
+            };
+            if o_obj == obj {
                 let new_preds = match compressed_subjects.get(subject_id) {
                     Some(p) => p.clone(),
                     None => SerdeValue::Object(SerdeMap::new()),
@@ -188,7 +206,7 @@ fn compress(
                     SerdeValue::Object(m) => m.clone(),
                     _ => SerdeMap::new(),
                 };
-                m.insert(String::from("annotations"), new_preds);
+                m.insert(kind.to_string(), new_preds);
                 o = SerdeValue::Object(m);
                 remove.insert(subject_id.to_string());
             }
@@ -215,7 +233,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         subject_ids.insert(row[1].clone().unwrap_or(String::from("")));
     }
 
-    println!("Converting subject ids to subjects map ...");
+    eprintln!("Converting subject ids to subjects map ...");
     let num_subjs = subject_ids.len();
     for (i, subject_id) in subject_ids.iter().enumerate() {
         let mut predicates = SerdeMap::new();
@@ -244,7 +262,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                 add_objects_and_sort(&mut v);
                 predicates.insert(predicate, v);
             } else {
-                println!("WARNING row {:?} has empty predicate", row);
+                eprintln!("WARNING row {:?} has empty predicate", row);
             }
 
             let object = get_cell_contents(row[3].as_ref());
@@ -265,12 +283,12 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         // Add an entry mapping `subject_id` to the predicates map in the subjects map:
         subjects.insert(subject_id.to_string(), SerdeValue::Object(predicates));
         if i != 0 && (i % 500) == 0 {
-            println!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
+            eprintln!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
         }
     }
 
     // Work through dependencies from leaves to root, nesting the blank structures:
-    println!("Working through dependencies ...");
+    eprintln!("Working through dependencies ...");
     while !dependencies.is_empty() {
         let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
         for leaf in subjects.keys() {
@@ -351,7 +369,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                     }
                     objects.push(obj);
                     if k != 0 && (k % 100) == 0 {
-                        println!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
+                        eprintln!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
                     }
                 }
                 objects.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
@@ -361,11 +379,11 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                     SerdeValue::Object(predicates.clone()),
                 );
                 if j != 0 && (j % 100) == 0 {
-                    println!("Converted {} predicates ({} total) ...", j + 1, num_preds);
+                    eprintln!("Converted {} predicates ({} total) ...", j + 1, num_preds);
                 }
             }
             if i != 0 && (i % 100) == 0 {
-                println!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
+                eprintln!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
             }
         }
         for subject_id in &handled {
@@ -374,9 +392,9 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     }
 
     // OWL annotation and RDF reification:
-    println!("Doing OWL annotation and RDF reification ...");
+    eprintln!("Doing OWL annotation and RDF reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
-    let mut compressed_subjects = subjects.clone();
+    let mut compressed_subjects = SerdeMap::new();
     for subject_id in subjects.keys() {
         let subject_id = subject_id.to_string();
         let preds: SerdeMap<String, SerdeValue>;
@@ -385,13 +403,19 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
             _ => preds = SerdeMap::new(),
         };
 
+        if let None = compressed_subjects.get(&subject_id) {
+            compressed_subjects.insert(subject_id.to_string(), SerdeValue::Object(preds.clone()));
+        };
+
         if preds.contains_key("owl:annotatedSource") {
-            println!("OWL annotation {}", subject_id);
+            eprintln!("OWL annotation {}", subject_id);
             compress(
+                "annotations",
                 &subject_id,
                 &subjects,
                 &mut compressed_subjects,
                 &mut remove,
+                &preds,
                 "owl:annotatedSource",
                 "owl:annotatedProperty",
                 "owl:annotatedTarget",
@@ -399,12 +423,14 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         }
 
         if preds.contains_key("rdf:subject") {
-            println!("RDF Reification {}", subject_id);
+            eprintln!("RDF Reification {}", subject_id);
             compress(
+                "metadata",
                 &subject_id,
                 &subjects,
                 &mut compressed_subjects,
                 &mut remove,
+                &preds,
                 "rdf:subject",
                 "rdf:predicate",
                 "rdf:object",
@@ -475,7 +501,7 @@ fn subjects_to_thick_rows(
 /// Given a predicates map, return a list of triples
 static mut B_ID: usize = 0;
 fn predmap2ttls(pred_map: &SerdeMap<String, SerdeValue>) -> Vec<SerdeValue> {
-    println!(
+    eprintln!(
         "In predmap2ttls. Received: {}",
         SerdeValue::Object(pred_map.clone())
     );
@@ -507,7 +533,7 @@ fn predmap2ttls(pred_map: &SerdeMap<String, SerdeValue>) -> Vec<SerdeValue> {
 
 /// Given a thick row, convert it to a SerdeValue and return it.
 fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
-    println!(
+    eprintln!(
         "In thick2obj. Received thick row: {}",
         SerdeValue::Object(thick_row.clone())
     );
@@ -537,7 +563,7 @@ fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
 
 /// Given a list of thick rows, convert it to a list of triples and return it.
 fn thick2ttl(thick_rows: &Vec<SerdeMap<String, SerdeValue>>) -> Vec<SerdeValue> {
-    println!("In thick2ttl. Received thick_rows: {:?}", thick_rows);
+    eprintln!("In thick2ttl. Received thick_rows: {:?}", thick_rows);
     let mut triples = vec![];
     for row in thick_rows {
         let mut row = row.clone();
@@ -559,6 +585,8 @@ fn thick2ttl(thick_rows: &Vec<SerdeMap<String, SerdeValue>>) -> Vec<SerdeValue> 
         triple.insert(String::from("object"), obj);
         let triple = SerdeValue::Object(triple);
         triples.push(triple);
+        // TODO: OWL Annotations
+        // TODO: RDF Reification
     }
     triples
 }
@@ -597,7 +625,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     )?;
     let filename = format!("file:{}", db);
     let mut thin_rows: Vec<_> = vec![];
-    println!("Parsing thin rows ...");
+    eprintln!("Parsing thin rows ...");
     RdfXmlParser::new(stdin.lock(), filename.as_str())
         .unwrap()
         .parse_all(&mut |t| {
@@ -658,14 +686,17 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
 
-    println!("Converting thin rows to subjects ...");
+    let mut report_output = String::from("");
+
+    eprintln!("Converting thin rows to subjects ...");
     let subjects = thin_rows_to_subjects(&thin_rows);
-    println!("{}", SerdeValue::Object(subjects.clone()));
-    println!("Converting subjects to thick rows ...");
+    report_output.push_str(&format!("{}", SerdeValue::Object(subjects.clone())).to_string());
+
+    eprintln!("Converting subjects to thick rows ...");
     let thick_rows = subjects_to_thick_rows(&subjects);
-    println!("THICK ROWS:");
+    eprintln!("THICK ROWS:");
     for row in thick_rows.clone() {
-        println!("{}", SerdeValue::Object(row));
+        eprintln!("{}", SerdeValue::Object(row));
     }
 
     let rows_to_insert = {
@@ -691,7 +722,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         rows
     };
 
-    println!("Inserting thick rows to db ...");
+    eprintln!("Inserting thick rows to db ...");
 
     for row in rows_to_insert {
         let mut stmt = tx
@@ -703,7 +734,10 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     tx.commit()?;
 
     let triples = thick2ttl(&thick_rows);
-    println!("TRIPLES: {}", SerdeValue::Array(triples));
+    eprintln!("TRIPLES: {}", SerdeValue::Array(triples));
+
+    eprintln!("---------- Writing report ----------");
+    println!("{}", report_output);
 
     Ok(())
 }
@@ -713,23 +747,23 @@ fn main() {
     let usage = "Usage: rdftab [-h|--help] TARGET.db";
     match args.get(1) {
         None => {
-            println!("You must specify a target database file.");
-            println!("{}", usage);
+            eprintln!("You must specify a target database file.");
+            eprintln!("{}", usage);
             process::exit(1);
         }
         Some(i) => {
             if i.eq("--help") || i.eq("-h") {
-                println!("{}", usage);
+                eprintln!("{}", usage);
                 process::exit(0);
             } else if i.starts_with("-") {
-                println!("Unknown option: {}", i);
-                println!("{}", usage);
+                eprintln!("Unknown option: {}", i);
+                eprintln!("{}", usage);
                 process::exit(1);
             }
 
             let db = &args[1];
             if let Err(err) = insert(db) {
-                println!("{}", err);
+                eprintln!("{}", err);
                 process::exit(1);
             }
         }
