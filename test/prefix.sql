@@ -8,6 +8,7 @@ INSERT OR IGNORE INTO prefix VALUES
 ("rdfs", "http://www.w3.org/2000/01/rdf-schema#"),
 ("xsd", "http://www.w3.org/2001/XMLSchema#"),
 ("owl", "http://www.w3.org/2002/07/owl#"),
+("swrl", "http://www.w3.org/2003/11/swrl#"),
 ("oio", "http://www.geneontology.org/formats/oboInOwl#"),
 ("dce", "http://purl.org/dc/elements/1.1/"),
 ("dct", "http://purl.org/dc/terms/"),
