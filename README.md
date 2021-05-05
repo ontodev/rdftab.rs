@@ -298,3 +298,72 @@ ex:foo | _:b1    | owl:annotatedProperty | rdfs:label               |           
 ex:foo | _:b1    | owl:annotatedTarget   |                          | Foo           |          |
 ex:foo | _:b1    | rdfs:comment          |                          | A silly label |          |
 
+
+### Stanza edge cases for OWL
+
+Note that OWL does not prioritize the directionality of some symmetric axiom types - for example, when you have a disjointness axiom or equivalence axiom connecting two named classes. In this case, the stanza is chosen arbitrarily.
+
+E.g. in an ontology that has `A disjointWith B` we get:
+
+stanza|subject|predicate|object|value|datatype|language
+---|---|---|---|---|---|---
+ex:B|ex:B|rdfs:label||B||
+ex:B|ex:B|owl:disjointWith|ex:a|||
+ex:B|ex:B|rdf:type|owl:Class|||
+ex:a|ex:a|rdfs:label||A||
+ex:a|ex:a|rdf:type|owl:Class|||
+
+This means that the convenience query shown above does not reliably fetch all axioms for a class.
+For example, in the above querying on A would not get the disjointness axiom
+
+Additionally, the stanza name may not be meaningful for GCIs.
+For example, given an axiom in Manchester syntax:
+
+```
+develops-from some (part-of some B) DisjointWith develops-from some (part-of some A)
+```
+
+which gives you this RDF/OWL:
+
+```xml
+   <owl:Restriction>
+        <owl:onProperty rdf:resource="http://example.com/develops-from"/>
+        <owl:someValuesFrom>
+            <owl:Restriction>
+                <owl:onProperty rdf:resource="http://example.com/part-of"/>
+                <owl:someValuesFrom rdf:resource="http://example.com/B"/>
+            </owl:Restriction>
+        </owl:someValuesFrom>
+        <owl:disjointWith>
+            <owl:Restriction>
+                <owl:onProperty rdf:resource="http://example.com/develops-from"/>
+                <owl:someValuesFrom>
+                    <owl:Restriction>
+                        <owl:onProperty rdf:resource="http://example.com/part-of"/>
+                        <owl:someValuesFrom rdf:resource="http://example.com/a"/>
+                    </owl:Restriction>
+                </owl:someValuesFrom>
+            </owl:Restriction>
+        </owl:disjointWith>
+    </owl:Restriction>
+```
+
+with RDFTab we get:
+
+stanza|subject|predicate|object|value|datatype|language
+---|---|---|---|---|---|---
+owl:disjointWith|_:riog00000011|owl:disjointWith|_:riog00000013|||
+owl:disjointWith|_:riog00000013|owl:someValuesFrom|_:riog00000014|||
+owl:disjointWith|_:riog00000014|owl:someValuesFrom|ex:a|||
+owl:disjointWith|_:riog00000014|owl:onProperty|ex:part-of|||
+owl:disjointWith|_:riog00000014|rdf:type|owl:Restriction|||
+owl:disjointWith|_:riog00000013|owl:onProperty|ex:develops-from|||
+owl:disjointWith|_:riog00000013|rdf:type|owl:Restriction|||
+owl:disjointWith|_:riog00000011|owl:someValuesFrom|_:riog00000012|||
+owl:disjointWith|_:riog00000012|owl:someValuesFrom|ex:B|||
+owl:disjointWith|_:riog00000012|owl:onProperty|ex:part-of|||
+owl:disjointWith|_:riog00000012|rdf:type|owl:Restriction|||
+owl:disjointWith|_:riog00000011|owl:onProperty|ex:develops-from|||
+owl:disjointWith|_:riog00000011|rdf:type|owl:Restriction|||
+
+In this case, to fetch all axioms for class ex:a or ex:B we need to iteratively query to walk up the graph
