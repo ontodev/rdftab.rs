@@ -5,7 +5,7 @@ use std::error::Error;
 use std::io;
 use std::process;
 
-use rio_api::model::*;
+use rio_api::model::{Literal, NamedNode, NamedOrBlankNode, Term};
 use rio_api::parser::TriplesParser;
 use rio_xml::{RdfXmlError, RdfXmlParser};
 
@@ -110,15 +110,17 @@ fn first_object(predicates: &SerdeMap<String, SerdeValue>, predicate: &str) -> S
         Some(objs) => match objs {
             SerdeValue::Array(v) => {
                 for obj in v.iter() {
-                    match obj.get("object") {
-                        None => (),
-                        Some(o) => return o.clone(),
-                    };
+                    if let Some(o) = obj.get("object") {
+                        return o.clone();
+                    } else if let Some(o) = obj.get("value") {
+                        return o.clone();
+                    }
                 }
             }
             _ => (),
         },
     };
+    eprintln!("No object found");
     return SerdeValue::String(String::from(""));
 }
 
@@ -188,16 +190,23 @@ fn compress(
         for o in objs {
             let mut o = o.clone();
             let o_obj: String;
+            let o_val: String;
+            let trim = |s: String| {
+                format!("{}", s)
+                    .trim_start_matches("\"")
+                    .trim_end_matches("\"")
+                    .to_string()
+            };
             match o.get("object") {
-                Some(s) => {
-                    o_obj = format!("{}", s)
-                        .trim_start_matches("\"")
-                        .trim_end_matches("\"")
-                        .to_string()
-                }
+                Some(s) => o_obj = trim(format!("{}", s)),
                 None => o_obj = String::from(""),
             };
-            if o_obj == obj {
+            match o.get("value") {
+                Some(s) => o_val = trim(format!("{}", s)),
+                None => o_val = String::from(""),
+            };
+
+            if o_obj == obj || o_val == obj {
                 let new_preds = match compressed_subjects.get(subject_id) {
                     Some(p) => p.clone(),
                     None => SerdeValue::Object(SerdeMap::new()),
