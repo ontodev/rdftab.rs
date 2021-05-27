@@ -5,6 +5,7 @@ authors = ["James A. Overton <james@overton.ca>"]
 edition = "2018"
 
 [dependencies]
+phf = { version = "0.8", features = ["macros"] }
 rio_api = "0.4.2"
 rio_xml = "0.4.2"
 serde_json = "1.0"

@@ -5,10 +5,10 @@ use std::error::Error;
 use std::io;
 use std::process;
 
+use phf::phf_map;
 use rio_api::model::{Literal, NamedNode, NamedOrBlankNode, Term};
 use rio_api::parser::TriplesParser;
 use rio_xml::{RdfXmlError, RdfXmlParser};
-
 use rusqlite::{params, Connection, Result};
 
 use serde_json::{
@@ -509,93 +509,251 @@ fn subjects_to_thick_rows(
 // We should find an alternative.
 /// Given a predicates map, return a list of triples
 static mut B_ID: usize = 0;
-fn predmap2ttls(pred_map: &SerdeMap<String, SerdeValue>) -> Vec<SerdeValue> {
-    eprintln!(
-        "In predmap2ttls. Received: {}",
-        SerdeValue::Object(pred_map.clone())
-    );
-    unsafe {
-        B_ID += 1;
-        let bnode = format!("_:myb{}", B_ID);
-        let mut ttls = vec![];
-        for (predicate, objects) in pred_map.iter() {
-            if let SerdeValue::Array(v) = objects {
-                for obj in v {
-                    if let SerdeValue::Object(m) = obj {
-                        let obj = thick2obj(&m);
-                        let mut tmp = SerdeMap::new();
-                        tmp.insert(String::from("subject"), SerdeValue::String(bnode.clone()));
-                        tmp.insert(
-                            String::from("predicate"),
-                            SerdeValue::String(predicate.clone()),
-                        );
-                        tmp.insert(String::from("object"), obj.clone());
-                        let tmp = SerdeValue::Object(tmp);
-                        ttls.push(tmp);
-                    }
-                }
-            }
-        }
-        return ttls;
-    }
-}
 
-/// Given a thick row, convert it to a SerdeValue and return it.
-fn thick2obj(thick_row: &SerdeMap<String, SerdeValue>) -> SerdeValue {
+fn thick2triples(
+    subject: &String,
+    predicate: &String,
+    thick_row: &SerdeMap<String, SerdeValue>,
+) -> Vec<SerdeValue> {
     eprintln!(
         "In thick2obj. Received thick row: {}",
         SerdeValue::Object(thick_row.clone())
     );
-    match thick_row.get("object") {
-        Some(SerdeValue::String(s)) => return SerdeValue::String(s.to_string()),
-        Some(SerdeValue::Object(m)) => return SerdeValue::Array(predmap2ttls(m)),
-        _ => (),
-    };
 
-    match thick_row.get("value") {
-        Some(SerdeValue::String(v)) => {
-            if let Some(SerdeValue::String(t)) = thick_row.get("datatype") {
-                return SerdeValue::String(format!("\"{}\"^^{}", v, t));
-            }
-            if let Some(SerdeValue::String(l)) = thick_row.get("language") {
-                return SerdeValue::String(format!("\"{}\"@{}", v, l));
-            }
-            return SerdeValue::String(format!("{}", v));
-        }
-        _ => (),
+    fn create_node(content: &String) -> SerdeValue {
+        // TODO: IMPLEMENT THIS FUNCTION.
+        // TODO: change the return type to whatever kind of object is required by RIO.
+        SerdeValue::String(content.to_string())
     }
 
-    // TODO: This shouldn't happen. Should we raise an exception?
-    eprintln!("ERROR!! {:?}", thick_row);
-    return SerdeValue::String("".to_string());
-}
+    fn decompress(
+        thick_row: &SerdeMap<String, SerdeValue>,
+        target: &SerdeValue,
+        target_type: &str,
+        decomp_type: &str,
+    ) -> SerdeMap<String, SerdeValue> {
+        static annotations: phf::Map<&'static str, &'static str> = phf_map! {
+            "subject" => "owl:annotatedSource",
+            "predicate" => "owl:annotatedProperty",
+            "object" => "owl:annotatedTarget",
+        };
+        static metadata: phf::Map<&'static str, &'static str> = phf_map! {
+            "subject" => "rdf:subject",
+            "predicate" => "rdf:predicate",
+            "object" => "rdf:object",
+        };
+        static spo_mappings: phf::Map<&'static str, &'static phf::Map<&'static str, &'static str>> = phf_map! {
+            "annotations" => &annotations,
+            "metadata" => &metadata,
+        };
 
-/// Given a list of thick rows, convert it to a list of triples and return it.
-fn thick2ttl(thick_rows: &Vec<SerdeMap<String, SerdeValue>>) -> Vec<SerdeValue> {
-    eprintln!("In thick2ttl. Received thick_rows: {:?}", thick_rows);
-    let mut triples = vec![];
-    for row in thick_rows {
-        let mut row = row.clone();
-        match row.get("object") {
-            Some(SerdeValue::String(s)) => {
-                if s.starts_with("{") {
-                    let val: SerdeValue = serde_json::from_str(s).unwrap();
-                    row.insert(String::from("object"), val);
+        let annodata_subj = spo_mappings[decomp_type]["subject"];
+        let annodata_pred = spo_mappings[decomp_type]["predicate"];
+        let annodata_obj = spo_mappings[decomp_type]["object"];
+
+        let mut target_map = SerdeMap::new();
+        match target {
+            SerdeValue::Object(m) => {
+                if !m.contains_key("value") {
+                    target_map.insert(
+                        String::from(target_type),
+                        SerdeValue::Array(predicate_map_to_triples(m)),
+                    );
+                } else {
+                    target_map.insert(String::from(target_type), target.clone());
                 }
+            }
+            SerdeValue::String(_) => {
+                target_map.insert(String::from(target_type), target.clone());
+            }
+            _ => {
+                eprintln!("WARNING: unknown target");
+            }
+        }
+
+        let mut subject_map = SerdeMap::new();
+        if let Some(SerdeValue::String(s)) = thick_row.get("subject") {
+            subject_map.insert(String::from("object"), SerdeValue::String(s.to_string()));
+        } else {
+            eprintln!("WARNING: unknown subject");
+        }
+
+        let mut predicate_map = SerdeMap::new();
+        if let Some(SerdeValue::String(s)) = thick_row.get("predicate") {
+            predicate_map.insert(String::from("object"), SerdeValue::String(s.to_string()));
+        } else {
+            eprintln!("WARNING: unknown predicate");
+        }
+
+        let mut object_type_map = SerdeMap::new();
+        object_type_map.insert(String::from("object"), {
+            if decomp_type == "annotations" {
+                SerdeValue::String(String::from("owl:Axiom"))
+            } else {
+                SerdeValue::String(String::from("rdf:Statement"))
+            }
+        });
+
+        let mut annodata = SerdeMap::new();
+        annodata.insert(
+            String::from(annodata_subj),
+            SerdeValue::Array(vec![SerdeValue::Object(subject_map)]),
+        );
+        annodata.insert(
+            String::from(annodata_pred),
+            SerdeValue::Array(vec![SerdeValue::Object(predicate_map)]),
+        );
+        annodata.insert(
+            String::from(annodata_obj),
+            SerdeValue::Array(vec![SerdeValue::Object(target_map)]),
+        );
+        annodata.insert(
+            String::from("rdf:type"),
+            SerdeValue::Array(vec![SerdeValue::Object(object_type_map)]),
+        );
+        if let Some(SerdeValue::Object(m)) = thick_row.get(decomp_type) {
+            for (key, val) in m.iter() {
+                annodata.insert(key.to_string(), val.clone());
+            }
+        }
+        return annodata;
+    }
+
+    fn predicate_map_to_triples(pred_map: &SerdeMap<String, SerdeValue>) -> Vec<SerdeValue> {
+        let mut triples = vec![];
+        let bnode = unsafe {
+            B_ID += 1;
+            format!("_:myb{}", B_ID)
+        };
+        for (predicate, objects) in pred_map.iter() {
+            if let SerdeValue::Array(v) = objects {
+                for obj in v {
+                    if let SerdeValue::Object(m) = obj {
+                        triples.append(&mut thick2triples(&bnode, &predicate, &m));
+                    } else {
+                        eprintln!("WARNING: This shouldn't have happened.");
+                    }
+                }
+            }
+        }
+        triples
+    }
+
+    fn obj2triples(
+        subject: &String,
+        predicate: &String,
+        thick_row: &SerdeMap<String, SerdeValue>,
+    ) -> Vec<SerdeValue> {
+        let mut triples = vec![];
+        let target = thick_row.get("object");
+        match target {
+            Some(SerdeValue::Array(target)) => {
+                for t in target {
+                    if let SerdeValue::Object(t) = t {
+                        let t_subject;
+                        match t.get("subject") {
+                            Some(SerdeValue::String(s)) => t_subject = s.clone(),
+                            _ => t_subject = String::from(""),
+                        };
+                        let t_predicate;
+                        match t.get("predicate") {
+                            Some(SerdeValue::String(s)) => t_predicate = s.clone(),
+                            _ => t_predicate = String::from(""),
+                        };
+                        triples.append(&mut thick2triples(&t_subject, &t_predicate, &t));
+                    }
+                }
+                let object = unsafe { format!("_:myb{}", B_ID - 1) };
+                let mut triple = SerdeMap::new();
+                triple.insert(String::from("subject"), create_node(&subject));
+                triple.insert(String::from("predicate"), create_node(&predicate));
+                triple.insert(String::from("object"), create_node(&object));
+                triples.push(SerdeValue::Object(triple));
+            }
+            Some(SerdeValue::Object(target)) => {
+                triples.append(&mut predicate_map_to_triples(&target));
+                let object = unsafe { format!("_:myb{}", B_ID + 1) };
+                let mut triple = SerdeMap::new();
+                triple.insert(String::from("subject"), create_node(&subject));
+                triple.insert(String::from("predicate"), create_node(&predicate));
+                triple.insert(String::from("object"), create_node(&object));
+                triples.push(SerdeValue::Object(triple));
+            }
+            Some(SerdeValue::String(target)) => {
+                let mut triple = SerdeMap::new();
+                triple.insert(String::from("subject"), create_node(&subject));
+                triple.insert(String::from("predicate"), create_node(&predicate));
+                triple.insert(String::from("object"), create_node(&target));
+                triples.push(SerdeValue::Object(triple));
             }
             _ => (),
         };
-        let obj = thick2obj(&row);
-        let subj = row.get("subject").unwrap();
-        let pred = row.get("predicate").unwrap();
-        let mut triple = SerdeMap::new();
-        triple.insert(String::from("subject"), subj.clone());
-        triple.insert(String::from("predicate"), pred.clone());
-        triple.insert(String::from("object"), obj);
-        let triple = SerdeValue::Object(triple);
-        triples.push(triple);
-        // TODO: OWL Annotations
-        // TODO: RDF Reification
+
+        if let Some(_) = thick_row.get("annotations") {
+            if let Some(target) = target {
+                triples.append(&mut predicate_map_to_triples(&decompress(
+                    thick_row,
+                    target,
+                    "object",
+                    "annotations",
+                )));
+            }
+        }
+
+        if let Some(_) = thick_row.get("metadata") {
+            if let Some(target) = target {
+                triples.append(&mut predicate_map_to_triples(&decompress(
+                    thick_row, target, "object", "metadata",
+                )));
+            }
+        }
+
+        triples
+    }
+    fn val2triples(
+        subject: &String,
+        predicate: &String,
+        thick_row: &SerdeMap<String, SerdeValue>,
+    ) -> Vec<SerdeValue> {
+        // TODO: IMPLEMENT THIS FUNCTION.
+        let mut triples = vec![];
+
+        triples
+    }
+
+    if let Some(_) = thick_row.get("object") {
+        return obj2triples(subject, predicate, thick_row);
+    } else if let Some(_) = thick_row.get("value") {
+        return val2triples(subject, predicate, thick_row);
+    } else {
+        eprintln!("ERROR!! {:?}", thick_row);
+        return vec![];
+    }
+}
+
+fn thicks2triples(thick_rows: &Vec<SerdeMap<String, SerdeValue>>) -> Vec<SerdeValue> {
+    eprintln!("In thicks2triples. Received thick_rows: {:?}", thick_rows);
+    let mut triples = vec![];
+    for row in thick_rows {
+        let mut row = row.clone();
+        if let Some(SerdeValue::String(s)) = row.get("object") {
+            if s.starts_with("{") {
+                if let Ok(val) = serde_json::from_str(s) {
+                    row.insert(String::from("object"), val);
+                }
+            }
+        }
+        let subject;
+        match row.get("subject") {
+            Some(SerdeValue::String(s)) => subject = s.clone(),
+            _ => subject = String::from(""),
+        };
+        let predicate;
+        match row.get("predicate") {
+            Some(SerdeValue::String(s)) => predicate = s.clone(),
+            _ => predicate = String::from(""),
+        };
+        triples.append(&mut thick2triples(&subject, &predicate, &row));
     }
     triples
 }
@@ -742,7 +900,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
 
     tx.commit()?;
 
-    let triples = thick2ttl(&thick_rows);
+    let triples = thicks2triples(&thick_rows);
     eprintln!("TRIPLES: {}", SerdeValue::Array(triples));
 
     eprintln!("---------- Writing report ----------");
