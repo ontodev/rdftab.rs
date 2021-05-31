@@ -694,8 +694,8 @@ fn thick2triples(
                 triples.push(SerdeValue::Object(triple));
             }
             Some(SerdeValue::Object(target)) => {
-                triples.append(&mut predicate_map_to_triples(&target));
                 let object = unsafe { format!("_:myb{}", B_ID + 1) };
+                triples.append(&mut predicate_map_to_triples(&target));
                 let mut triple = SerdeMap::new();
                 triple.insert(
                     String::from("subject"),
