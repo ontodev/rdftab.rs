@@ -6,7 +6,7 @@ use std::io;
 use std::process;
 
 use phf::phf_map;
-use regex::Regex;
+//use regex::Regex;
 use rio_api::model::{Literal, NamedNode, NamedOrBlankNode, Term};
 use rio_api::parser::TriplesParser;
 use rio_xml::{RdfXmlError, RdfXmlParser};
@@ -521,41 +521,25 @@ fn thick2triples(
         SerdeValue::Object(thick_row.clone())
     );
 
-    fn deprefix(prefixes: &Vec<Prefix>, content: &String) -> Option<String> {
-        let pattern = Regex::new(r"([\w\-]+):(.*)");
-        if let Err(_) = pattern {
-            eprintln!("CODING ERROR: invalid regular expression");
-            return None;
-        }
-        let pattern = pattern.unwrap();
-        if let Some(capts) = pattern.captures(content) {
-            if let (Some(prefix), Some(name)) = (capts.get(1), capts.get(2)) {
-                for p in prefixes {
-                    if p.prefix == prefix.as_str() {
-                        return Some(format!("{}{}", p.base, name.as_str()));
-                    }
-                }
-            }
-        }
-        return None;
-    }
-
     fn create_node(prefixes: &Vec<Prefix>, content: &SerdeValue) -> SerdeValue {
         if let SerdeValue::String(s) = content {
-            if !s.starts_with("_:") && !s.starts_with("<") {
-                if let Some(deprefixed_content) = deprefix(prefixes, s) {
-                    return SerdeValue::String(deprefixed_content);
-                } else {
-                    // is it really necessary to clone here?
-                    return content.clone();
-                }
-            }
+            return SerdeValue::String(format!("{}", s));
         } else if let SerdeValue::Object(m) = content {
-            // TO BE CONTINUED ...
+            if let (Some(SerdeValue::String(value)), Some(SerdeValue::String(language))) =
+                (m.get("value"), m.get("language"))
+            {
+                return SerdeValue::String(format!(r#""{}"@{}"#, value, language));
+            } else if let (Some(SerdeValue::String(value)), Some(SerdeValue::String(datatype))) =
+                (m.get("value"), m.get("datatype"))
+            {
+                return SerdeValue::String(format!(r#""{}"^^{}"#, value, datatype));
+            } else if let Some(SerdeValue::String(value)) = m.get("value") {
+                return SerdeValue::String(format!("{}", value));
+            }
         }
 
-        // is it really necessary to clone here?
-        return content.clone();
+        eprintln!("WARNING: could not interpret content.");
+        return SerdeValue::String(format!("{}", content));
     }
 
     fn decompress(
@@ -962,18 +946,11 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
 
-    let mut report_output = String::from("");
-
     eprintln!("Converting thin rows to subjects ...");
     let subjects = thin_rows_to_subjects(&thin_rows);
-    report_output.push_str(&format!("{}", SerdeValue::Object(subjects.clone())).to_string());
 
     eprintln!("Converting subjects to thick rows ...");
     let thick_rows = subjects_to_thick_rows(&subjects);
-    eprintln!("THICK ROWS:");
-    for row in thick_rows.clone() {
-        eprintln!("{}", SerdeValue::Object(row));
-    }
 
     let rows_to_insert = {
         let mut rows = vec![];
@@ -1010,10 +987,24 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     tx.commit()?;
 
     let triples = thicks2triples(&prefixes, &thick_rows);
-    eprintln!("TRIPLES: {}", SerdeValue::Array(triples));
+    let mut triples_output = String::from("");
+    for triple in triples {
+        match triple.get("subject") {
+            Some(SerdeValue::String(s)) => triples_output.push_str(&format!("{} ", s)),
+            _ => triples_output.push_str(r#""""#),
+        };
+        match triple.get("predicate") {
+            Some(SerdeValue::String(p)) => triples_output.push_str(&format!("{} ", p)),
+            _ => triples_output.push_str(r#""""#),
+        };
+        match triple.get("object") {
+            Some(SerdeValue::String(o)) => triples_output.push_str(&format!("{}\n", o)),
+            _ => triples_output.push_str(r#""""#),
+        };
+    }
 
-    eprintln!("---------- Writing report ----------");
-    println!("{}", report_output);
+    eprintln!("---------- Triples (after round-trip) ----------");
+    println!("{}", triples_output);
 
     Ok(())
 }
