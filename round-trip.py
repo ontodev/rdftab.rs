@@ -22,18 +22,24 @@ def compare_graphs(actual, expected, show_diff=False, sort=False):
     expected_iso = to_isomorphic(expected)
 
     print("Comparing graphs ...")
-    if actual_iso == expected_iso:
-        print("Graphs are identical.")
-    else:
-        print("Graphs are not identical.")
-
     if actual_iso != expected_iso:
+        print(
+            "Graphs are not identical. Complete dumps of the actual and expected graphs can be "
+            "found in build/actual.ttl and build/expected.ttl"
+        )
         if show_diff:
             _, in_first, in_second = graph_diff(actual_iso, expected_iso)
             print("----- Contents of actual graph not in expected graph -----")
             dump_ttl(in_first, sort)
             print("----- Contents of expected graph not in actual graph -----")
             dump_ttl(in_second, sort)
+        # Dump the complete graph contents to two files:
+        with open("build/expected.ttl", "w") as fh:
+            print(expected.serialize(format="n3").decode("utf-8"), file=fh)
+        with open("build/actual.ttl", "w") as fh:
+            print(actual.serialize(format="n3").decode("utf-8"), file=fh)
+    else:
+        print("Graphs are identical.")
 
 
 if __name__ == "__main__":
