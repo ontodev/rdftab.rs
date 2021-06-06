@@ -18,19 +18,6 @@ use serde_json::{
     Value as SerdeValue,
 };
 
-static mut NESTING: usize = 0;
-fn log(message: &str) {
-    let mut nesting = String::from("");
-    unsafe {
-        for _ in 0..NESTING {
-            nesting.push_str("    ");
-        }
-    }
-    let message = message.replace("\n", format!("\n{}", nesting).as_str());
-    let message = format!("{}{}", nesting, message);
-    eprintln!("{}", message);
-}
-
 /// Represents a URI prefix
 #[derive(Debug)]
 struct Prefix {
@@ -134,7 +121,7 @@ fn first_object(predicates: &SerdeMap<String, SerdeValue>, predicate: &str) -> S
             _ => (),
         },
     };
-    eprintln!("No object found");
+    eprintln!("WARNING No object found");
     return SerdeValue::String(String::from(""));
 }
 
@@ -165,7 +152,6 @@ fn compress(
         .trim_start_matches("\"")
         .trim_end_matches("\"")
         .to_string();
-    //eprintln!("<S, P, O> = <{}, {}, {:?}>", subject, predicate, obj);
 
     if let Some(SerdeValue::Object(m)) = compressed_subjects.get_mut(subject_id) {
         m.remove(subject_type);
@@ -415,7 +401,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     }
 
     // OWL annotation and RDF reification:
-    eprintln!("Doing OWL annotation and RDF reification ...");
+    eprintln!("Generating OWL annotation and RDF reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut compressed_subjects = SerdeMap::new();
     for subject_id in subjects.keys() {
@@ -431,7 +417,6 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         };
 
         if preds.contains_key("owl:annotatedSource") {
-            //eprintln!("OWL annotation {}", subject_id);
             compress(
                 "annotations",
                 &subject_id,
@@ -446,7 +431,6 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         }
 
         if preds.contains_key("rdf:subject") {
-            //eprintln!("RDF Reification {}", subject_id);
             compress(
                 "metadata",
                 &subject_id,
@@ -529,11 +513,6 @@ fn thick2triples(
     predicate: &String,
     thick_row: &SerdeMap<String, SerdeValue>,
 ) -> Vec<SerdeValue> {
-    unsafe {
-        NESTING += 1;
-    }
-    log("Entering thick2triples");
-
     fn deprefix(prefixes: &Vec<Prefix>, content: &String) -> String {
         let pattern = Regex::new(r"^([\w\-]+):(.*)");
         if let Err(_) = pattern {
@@ -554,30 +533,14 @@ fn thick2triples(
     }
 
     fn create_node(prefixes: &Vec<Prefix>, content: &SerdeValue) -> SerdeValue {
-        unsafe {
-            NESTING += 1;
-        }
-        log(format!("In create_node. Got content: {:#?}", content).as_str());
         if let SerdeValue::String(s) = content {
             if s.starts_with("_:") {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return content.clone();
             } else if s.starts_with("<") {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return content.clone();
             } else if s.starts_with("http") {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return SerdeValue::String(format!("\"{}\"", s));
             } else {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return SerdeValue::String(deprefix(prefixes, s));
             }
         } else if let SerdeValue::Object(m) = content {
@@ -591,34 +554,19 @@ fn thick2triples(
             if let (Some(SerdeValue::String(value)), Some(SerdeValue::String(language))) =
                 (m.get("value"), m.get("language"))
             {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return SerdeValue::String(format!("{}@{}", quote(value), language));
             } else if let (Some(SerdeValue::String(value)), Some(SerdeValue::String(datatype))) =
                 (m.get("value"), m.get("datatype"))
             {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return SerdeValue::String(format!("{}^^{}", quote(value), datatype));
             } else if let Some(SerdeValue::String(value)) = m.get("value") {
-                unsafe {
-                    NESTING -= 1;
-                }
                 return SerdeValue::String(format!("{}", quote(value)));
             } else {
-                unsafe {
-                    NESTING -= 1;
-                }
                 eprintln!("WARNING: could not interpret content map.");
                 return SerdeValue::String(format!("{}", content));
             }
         }
 
-        unsafe {
-            NESTING -= 1;
-        }
         eprintln!("WARNING: could not interpret content.");
         return SerdeValue::String(format!("{}", content));
     }
@@ -630,11 +578,6 @@ fn thick2triples(
         target_type: &str,
         decomp_type: &str,
     ) -> SerdeMap<String, SerdeValue> {
-        unsafe {
-            NESTING += 1;
-        }
-        log(format!("Entering decompress ({})", decomp_type).as_str());
-
         static ANNOTATIONS: phf::Map<&'static str, &'static str> = phf_map! {
             "subject" => "owl:annotatedSource",
             "predicate" => "owl:annotatedProperty",
@@ -719,11 +662,6 @@ fn thick2triples(
                 annodata.insert(key.to_string(), val.clone());
             }
         }
-        log(format!("ANNOTATIONS / METADATA:\n{:#?}", annodata).as_str());
-        log("Exiting decompress");
-        unsafe {
-            NESTING -= 1;
-        }
         return annodata;
     }
 
@@ -731,12 +669,6 @@ fn thick2triples(
         prefixes: &Vec<Prefix>,
         pred_map: &SerdeMap<String, SerdeValue>,
     ) -> Vec<SerdeValue> {
-        unsafe {
-            NESTING += 1;
-        }
-        log("Entering predicate_map_to_triples");
-        log(format!("Predicate map is:\n{:#?}", pred_map).as_str());
-
         let mut triples = vec![];
         let bnode = unsafe {
             B_ID += 1;
@@ -745,7 +677,6 @@ fn thick2triples(
         for (predicate, objects) in pred_map.iter() {
             if let SerdeValue::Array(v) = objects {
                 for obj in v {
-                    log(format!("Processing object ({}):\n{:#?}", predicate, obj).as_str());
                     if let SerdeValue::Object(m) = obj {
                         triples.append(&mut thick2triples(&prefixes, &bnode, &predicate, &m));
                     } else {
@@ -753,11 +684,6 @@ fn thick2triples(
                     }
                 }
             }
-        }
-        log(format!("TRIPLES\n{:#?}", triples).as_str());
-        log("Exiting predicate_map_to_triples");
-        unsafe {
-            NESTING -= 1;
         }
         triples
     }
@@ -768,13 +694,7 @@ fn thick2triples(
         predicate: &String,
         thick_row: &SerdeMap<String, SerdeValue>,
     ) -> Vec<SerdeValue> {
-        unsafe {
-            NESTING += 1;
-        }
-        log(format!("Entering obj2triples. Got thick row:\n{:#?}", thick_row).as_str());
-
         let mut triples = vec![];
-        log("Generating the main set of triples ...");
         let target = thick_row.get("object");
         match target {
             Some(SerdeValue::Array(target)) => {
@@ -846,9 +766,6 @@ fn thick2triples(
             _ => (),
         };
 
-        log(format!("Triples are initially:\n{:#?}", triples).as_str());
-
-        log("Looking for annotations ...");
         if let Some(_) = thick_row.get("annotations") {
             if let Some(target) = target {
                 triples.append(&mut predicate_map_to_triples(
@@ -858,7 +775,6 @@ fn thick2triples(
             }
         }
 
-        log("Looking for metadata ...");
         if let Some(_) = thick_row.get("metadata") {
             if let Some(target) = target {
                 triples.append(&mut predicate_map_to_triples(
@@ -868,14 +784,6 @@ fn thick2triples(
             }
         }
 
-        if thick_row.contains_key("annotations") || thick_row.contains_key("metadata") {
-            log(format!("Triples are now:\n{:#?}", triples).as_str());
-        }
-
-        log("Exiting obj2triples");
-        unsafe {
-            NESTING -= 1;
-        }
         triples
     }
 
@@ -885,11 +793,6 @@ fn thick2triples(
         predicate: &String,
         thick_row: &SerdeMap<String, SerdeValue>,
     ) -> Vec<SerdeValue> {
-        unsafe {
-            NESTING += 1;
-        }
-        log(format!("Entering val2triples. Got thick row:\n{:#?}", thick_row).as_str());
-
         let mut triples = vec![];
         let target;
         if let Some(value) = thick_row.get("value") {
@@ -928,17 +831,13 @@ fn thick2triples(
             );
             triples.push(SerdeValue::Object(triple));
 
-            log(format!("Triples are initially:\n{:#?}", triples).as_str());
-
-            log("Looking for annotations ...");
-            //let target = SerdeValue::Object(target);
             if let Some(_) = thick_row.get("annotations") {
                 triples.append(&mut predicate_map_to_triples(
                     prefixes,
                     &decompress(prefixes, thick_row, &target, "value", "annotations"),
                 ));
             }
-            log("Looking for metadata ...");
+
             if let Some(_) = thick_row.get("metadata") {
                 triples.append(&mut predicate_map_to_triples(
                     prefixes,
@@ -946,41 +845,19 @@ fn thick2triples(
                 ));
             }
 
-            log("Exiting val2triples");
-            unsafe {
-                NESTING -= 1;
-            }
             return triples;
         } else {
-            eprintln!("Unable to retrieve value from thick row");
-            unsafe {
-                NESTING -= 1;
-            }
+            eprintln!("ERROR Unable to retrieve value from thick row");
             return triples;
         }
     }
 
     if let Some(_) = thick_row.get("object") {
-        let bloob = obj2triples(prefixes, subject, predicate, thick_row);
-        log("Exiting thick2triples");
-        unsafe {
-            NESTING -= 1;
-        }
-        return bloob;
-        //return obj2triples(prefixes, subject, predicate, thick_row);
+        return obj2triples(prefixes, subject, predicate, thick_row);
     } else if let Some(_) = thick_row.get("value") {
-        let bloob = val2triples(prefixes, subject, predicate, thick_row);
-        log("Exiting thick2triples");
-        unsafe {
-            NESTING -= 1;
-        }
-        return bloob;
-        //return val2triples(prefixes, subject, predicate, thick_row);
+        return val2triples(prefixes, subject, predicate, thick_row);
     } else {
-        unsafe {
-            NESTING -= 1;
-        }
-        eprintln!("ERROR!! {:?}", thick_row);
+        eprintln!("ERROR could not find either an object or a value in thick_row");
         return vec![];
     }
 }
@@ -989,7 +866,6 @@ fn thicks2triples(
     prefixes: &Vec<Prefix>,
     thick_rows: &Vec<SerdeMap<String, SerdeValue>>,
 ) -> Vec<SerdeValue> {
-    log("Entering thicks2triples");
     let mut triples = vec![];
     for row in thick_rows {
         let mut row = row.clone();
@@ -1012,7 +888,6 @@ fn thicks2triples(
         };
         triples.append(&mut thick2triples(&prefixes, &subject, &predicate, &row));
     }
-    log("Exiting thicks2triples");
     triples
 }
 
@@ -1151,19 +1026,8 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
 
     tx.commit()?;
 
-    // For debugging.
-    //let thick_rows = {
-    //    let mut pruned_rows = vec![];
-    //    for thick_row in thick_rows.clone() {
-    //        if thick_row.get("subject").unwrap() == "BFO:0000019" {
-    //            pruned_rows.push(thick_row);
-    //        }
-    //    }
-    //    pruned_rows
-    //};
-
+    eprintln!("Generating triples for round-trip comparison ...");
     let triples = thicks2triples(&prefixes, &thick_rows);
-    eprintln!("Writing triples (after round-trip) to STDOUT.");
     for prefix in prefixes {
         println!("@prefix {}: <{}> .", prefix.prefix, prefix.base)
     }

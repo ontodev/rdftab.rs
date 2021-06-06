@@ -11,20 +11,22 @@ ROBOT := java -jar bin/robot.jar
 .PHONY: all
 all: build/roundtrip-thin.diff
 
-.PHONY: clean
+.PHONY: clean cargoclean clobber
 clean:
 	rm -rf build
 
-.PHONY: clobber
+cargoclean:
+	cargo clean
+
 clobber: clean
 	rm -rf bin
-	
+
 build bin:
 	mkdir -p $@
 
 bin/robot.jar: | bin
 	curl -L -o $@ https://build.obolibrary.io/job/ontodev/job/robot/job/master/lastSuccessfulBuild/artifact/bin/robot.jar
-	
+
 build/thick.xlsx: | build
 	curl -L -o $@ "https://docs.google.com/spreadsheets/d/19zS8lHUM5cU_Nf9Rc7-TGL6wesOD8JLINJSan3DmPqE/export?format=xlsx"
 
@@ -44,7 +46,7 @@ build/prefix.sql: build/prefix.tsv | build
 	| tac \
 	>> $@
 
-build/thin.sql: build/thin.tsv
+build/thin.sql: build/thin.tsv | build
 	echo "CREATE TABLE IF NOT EXISTS statements (" > $@
 	echo "  stanza TEXT NOT NULL," >> $@
 	echo "  subject TEXT NOT NULL," >> $@
@@ -82,7 +84,10 @@ build/thin.rdf: build/thin.ttl
 target/release/rdftab: src/main.rs
 	cargo build --release
 
-build/roundtrip-thin.db: target/release/rdftab build/prefix.sql build/thin.rdf
+target/debug/rdftab: src/main.rs
+	cargo build
+
+build/roundtrip-thin.db: target/debug/rdftab build/prefix.sql build/thin.rdf
 	rm -f $@
 	sqlite3 $@ < $(word 2,$^)
 	$< $@ < $(word 3,$^)
@@ -100,3 +105,11 @@ build/sorted-thin.tsv: build/thin.tsv
 
 build/roundtrip-thin.diff: build/sorted-thin.tsv build/roundtrip-thin.tsv
 	diff $^
+
+build/thick.db: build/prefix.sql target/debug/rdftab
+	rm -f $@
+	sqlite3 $@ < $<
+
+.PHONY: round-trip-example
+round-trip-example: build/thick.db build/thin.rdf target/debug/rdftab round-trip.py
+	rdftab $< < $(word 2,$^) | round-trip.py $(word 2,$^)
