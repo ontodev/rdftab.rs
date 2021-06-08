@@ -243,7 +243,8 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     }
 
     eprintln!("Converting subject ids to subjects map ...");
-    for subject_id in &subject_ids {
+    let num_subjs = subject_ids.len();
+    for (i, subject_id) in subject_ids.iter().enumerate() {
         let mut predicates = SerdeMap::new();
         for row in thin_rows.iter() {
             if subject_id.ne(&get_cell_contents(row[1].as_ref())) {
@@ -290,6 +291,9 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
 
         // Add an entry mapping `subject_id` to the predicates map in the subjects map:
         subjects.insert(subject_id.to_owned(), SerdeValue::Object(predicates));
+        if i != 0 && (i % 500) == 0 {
+            eprintln!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
+        }
     }
 
     work_through_dependencies(&mut dependencies, &mut subjects);
@@ -312,11 +316,13 @@ fn work_through_dependencies(
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        for subject_id in subjects
+        let num_subjs = subjects.keys().len();
+        for (i, subject_id) in subjects
             .keys()
             .map(|s| s.to_owned())
             .collect::<Vec<_>>()
             .iter()
+            .enumerate()
         {
             let mut predicates: SerdeMap<String, SerdeValue>;
             match subjects.get(subject_id) {
@@ -324,11 +330,13 @@ fn work_through_dependencies(
                 _ => predicates = SerdeMap::new(),
             };
 
-            for predicate in predicates
+            let num_preds = predicates.keys().len();
+            for (j, predicate) in predicates
                 .keys()
                 .map(|s| s.to_owned())
                 .collect::<Vec<_>>()
                 .iter()
+                .enumerate()
             {
                 let pred_objs: Vec<SerdeValue>;
                 match predicates.get(predicate) {
@@ -336,8 +344,9 @@ fn work_through_dependencies(
                     _ => pred_objs = vec![],
                 };
 
+                let num_pred_objs = pred_objs.len();
                 let mut objects = vec![];
-                for obj in &pred_objs {
+                for (k, obj) in pred_objs.iter().enumerate() {
                     let mut obj = obj.to_owned();
                     let o: SerdeValue;
                     if let Some(val) = obj.get(&String::from("object")) {
@@ -376,6 +385,9 @@ fn work_through_dependencies(
                         _ => (),
                     }
                     objects.push(obj);
+                    if k != 0 && (k % 100) == 0 {
+                        eprintln!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
+                    }
                 }
                 objects.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
                 predicates.insert(predicate.to_owned(), SerdeValue::Array(objects));
@@ -383,6 +395,12 @@ fn work_through_dependencies(
                     subject_id.to_owned(),
                     SerdeValue::Object(predicates.to_owned()),
                 );
+                if j != 0 && (j % 100) == 0 {
+                    eprintln!("Converted {} predicates ({} total) ...", j + 1, num_preds);
+                }
+            }
+            if i != 0 && (i % 100) == 0 {
+                eprintln!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
             }
         }
         for subject_id in &handled {
