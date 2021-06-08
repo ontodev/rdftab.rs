@@ -239,15 +239,14 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     let mut dependencies: BTreeMap<String, BTreeSet<_>> = BTreeMap::new();
     let mut subject_ids: BTreeSet<String> = vec![].into_iter().collect();
     for row in thin_rows.iter() {
-        subject_ids.insert(row[1].clone().unwrap_or(String::from("")));
+        subject_ids.insert(get_cell_contents(row[1].as_ref()));
     }
 
     eprintln!("Converting subject ids to subjects map ...");
-    let num_subjs = subject_ids.len();
-    for (i, subject_id) in subject_ids.iter().enumerate() {
+    for subject_id in &subject_ids {
         let mut predicates = SerdeMap::new();
         for row in thin_rows.iter() {
-            if subject_id.to_string() != get_cell_contents(row[1].as_ref()) {
+            if subject_id.ne(&get_cell_contents(row[1].as_ref())) {
                 continue;
             }
 
@@ -284,37 +283,40 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                 } else {
                     let mut v = BTreeSet::new();
                     v.insert(object);
-                    dependencies.insert(subject_id.to_string(), v);
+                    dependencies.insert(subject_id.to_owned(), v);
                 }
             }
         }
 
         // Add an entry mapping `subject_id` to the predicates map in the subjects map:
-        subjects.insert(subject_id.to_string(), SerdeValue::Object(predicates));
-        if i != 0 && (i % 500) == 0 {
-            eprintln!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
-        }
+        subjects.insert(subject_id.to_owned(), SerdeValue::Object(predicates));
     }
 
+    work_through_dependencies(&mut dependencies, &mut subjects);
+    subjects
+}
+
+fn work_through_dependencies(
+    dependencies: &mut BTreeMap<String, BTreeSet<String>>,
+    subjects: &mut SerdeMap<String, SerdeValue>,
+) {
     // Work through dependencies from leaves to root, nesting the blank structures:
     eprintln!("Working through dependencies ...");
     while !dependencies.is_empty() {
         let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
         for leaf in subjects.keys() {
             if !dependencies.keys().collect::<Vec<_>>().contains(&leaf) {
-                leaves.insert(leaf.clone());
+                leaves.insert(leaf.to_owned());
             }
         }
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        let num_subjs = subjects.keys().len();
-        for (i, subject_id) in subjects
+        for subject_id in subjects
             .keys()
-            .map(|s| s.to_string())
+            .map(|s| s.to_owned())
             .collect::<Vec<_>>()
             .iter()
-            .enumerate()
         {
             let mut predicates: SerdeMap<String, SerdeValue>;
             match subjects.get(subject_id) {
@@ -322,13 +324,11 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                 _ => predicates = SerdeMap::new(),
             };
 
-            let num_preds = predicates.keys().len();
-            for (j, predicate) in predicates
+            for predicate in predicates
                 .keys()
-                .map(|s| s.to_string())
+                .map(|s| s.to_owned())
                 .collect::<Vec<_>>()
                 .iter()
-                .enumerate()
             {
                 let pred_objs: Vec<SerdeValue>;
                 match predicates.get(predicate) {
@@ -336,13 +336,12 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                     _ => pred_objs = vec![],
                 };
 
-                let num_pred_objs = pred_objs.len();
                 let mut objects = vec![];
-                for (k, obj) in pred_objs.iter().enumerate() {
-                    let mut obj = obj.clone();
+                for obj in &pred_objs {
+                    let mut obj = obj.to_owned();
                     let o: SerdeValue;
                     if let Some(val) = obj.get(&String::from("object")) {
-                        o = val.clone();
+                        o = val.to_owned();
                     } else {
                         o = SerdeValue::Object(SerdeMap::new());
                     }
@@ -353,14 +352,14 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                                 if leaves.contains(&o) {
                                     let val: SerdeValue;
                                     if let Some(v) = subjects.get(&o) {
-                                        val = v.clone();
+                                        val = v.to_owned();
                                     } else {
                                         val = SerdeValue::Object(SerdeMap::new());
                                     }
 
                                     if let SerdeValue::Object(ref mut m) = obj {
                                         m.clear();
-                                        m.insert(String::from("object"), val.clone());
+                                        m.insert(String::from("object"), val);
                                         handled.insert(o);
                                     }
                                 } else {
@@ -369,7 +368,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                                     } else {
                                         let mut v = BTreeSet::new();
                                         v.insert(o);
-                                        dependencies.insert(subject_id.to_string(), v);
+                                        dependencies.insert(subject_id.to_owned(), v);
                                     }
                                 }
                             }
@@ -377,35 +376,28 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
                         _ => (),
                     }
                     objects.push(obj);
-                    if k != 0 && (k % 100) == 0 {
-                        eprintln!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
-                    }
                 }
                 objects.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
-                predicates.insert(predicate.to_string(), SerdeValue::Array(objects));
+                predicates.insert(predicate.to_owned(), SerdeValue::Array(objects));
                 subjects.insert(
-                    subject_id.to_string(),
-                    SerdeValue::Object(predicates.clone()),
+                    subject_id.to_owned(),
+                    SerdeValue::Object(predicates.to_owned()),
                 );
-                if j != 0 && (j % 100) == 0 {
-                    eprintln!("Converted {} predicates ({} total) ...", j + 1, num_preds);
-                }
-            }
-            if i != 0 && (i % 100) == 0 {
-                eprintln!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
             }
         }
         for subject_id in &handled {
             subjects.remove(subject_id);
         }
     }
+}
 
+fn annotate_reify(subjects: SerdeMap<String, SerdeValue>) -> SerdeMap<String, SerdeValue> {
     // OWL annotation and RDF reification:
     eprintln!("Generating OWL annotation and RDF reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut compressed_subjects = SerdeMap::new();
     for subject_id in subjects.keys() {
-        let subject_id = subject_id.to_string();
+        let subject_id = subject_id.to_owned();
         let preds: SerdeMap<String, SerdeValue>;
         match subjects.get(&subject_id) {
             Some(SerdeValue::Object(m)) => preds = m.clone(),
@@ -413,7 +405,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         };
 
         if let None = compressed_subjects.get(&subject_id) {
-            compressed_subjects.insert(subject_id.to_string(), SerdeValue::Object(preds.clone()));
+            compressed_subjects.insert(subject_id.to_owned(), SerdeValue::Object(preds.clone()));
         };
 
         if preds.contains_key("owl:annotatedSource") {
@@ -446,7 +438,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
     }
 
     // Remove the subject ids from compressed_subjects that we earlier identified for removal:
-    for r in remove.iter() {
+    for r in &remove {
         compressed_subjects.remove(r);
     }
 
@@ -891,7 +883,7 @@ fn thicks2triples(
     triples
 }
 
-fn insert(db: &String) -> Result<(), Box<dyn Error>> {
+fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
     let stanza_end = NamedOrBlankNode::from(NamedNode {
         iri: "http://example.com/stanza-end",
     })
@@ -987,7 +979,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
         .unwrap();
 
     eprintln!("Converting thin rows to subjects ...");
-    let subjects = thin_rows_to_subjects(&thin_rows);
+    let subjects = annotate_reify(thin_rows_to_subjects(&thin_rows));
 
     eprintln!("Converting subjects to thick rows ...");
     let thick_rows = subjects_to_thick_rows(&subjects);
@@ -1026,24 +1018,26 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
 
     tx.commit()?;
 
-    eprintln!("Generating triples for round-trip comparison ...");
-    let triples = thicks2triples(&prefixes, &thick_rows);
-    for prefix in prefixes {
-        println!("@prefix {}: <{}> .", prefix.prefix, prefix.base)
-    }
-    for triple in triples {
-        match triple.get("subject") {
-            Some(SerdeValue::String(s)) => print!("{} ", s),
-            _ => print!(r#""" "#),
-        };
-        match triple.get("predicate") {
-            Some(SerdeValue::String(p)) => print!("{} ", p),
-            _ => print!(r#""" "#),
-        };
-        match triple.get("object") {
-            Some(SerdeValue::String(o)) => println!("{} .", o),
-            _ => println!(r#""""#),
-        };
+    if round_trip {
+        eprintln!("Generating triples for round-trip comparison ...");
+        let triples = thicks2triples(&prefixes, &thick_rows);
+        for prefix in prefixes {
+            println!("@prefix {}: <{}> .", prefix.prefix, prefix.base)
+        }
+        for triple in triples {
+            match triple.get("subject") {
+                Some(SerdeValue::String(s)) => print!("{} ", s),
+                _ => print!(r#""" "#),
+            };
+            match triple.get("predicate") {
+                Some(SerdeValue::String(p)) => print!("{} ", p),
+                _ => print!(r#""" "#),
+            };
+            match triple.get("object") {
+                Some(SerdeValue::String(o)) => println!("{} .", o),
+                _ => println!(r#""""#),
+            };
+        }
     }
 
     Ok(())
@@ -1051,7 +1045,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let usage = "Usage: rdftab [-h|--help] TARGET.db";
+    let usage = "Usage: rdftab [-h|--help] [-r|--round-trip] TARGET.db";
     match args.get(1) {
         None => {
             eprintln!("You must specify a target database file.");
@@ -1062,14 +1056,28 @@ fn main() {
             if i.eq("--help") || i.eq("-h") {
                 eprintln!("{}", usage);
                 process::exit(0);
-            } else if i.starts_with("-") {
-                eprintln!("Unknown option: {}", i);
-                eprintln!("{}", usage);
-                process::exit(1);
             }
 
-            let db = &args[1];
-            if let Err(err) = insert(db) {
+            let round_trip;
+            let db;
+            if i.eq("--round-trip") || i.eq("-r") {
+                round_trip = true;
+                match args.get(2) {
+                    Some(_) => {
+                        db = &args[2];
+                    }
+                    None => {
+                        eprintln!("You must specify a target database file.");
+                        eprintln!("{}", usage);
+                        process::exit(1);
+                    }
+                };
+            } else {
+                round_trip = false;
+                db = &args[1];
+            }
+
+            if let Err(err) = insert(db, round_trip) {
                 eprintln!("{}", err);
                 process::exit(1);
             }

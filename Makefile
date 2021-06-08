@@ -112,4 +112,4 @@ build/thick.db: build/prefix.sql target/debug/rdftab
 
 .PHONY: round-trip-example
 round-trip-example: build/thick.db build/thin.rdf target/debug/rdftab round-trip.py
-	rdftab $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
