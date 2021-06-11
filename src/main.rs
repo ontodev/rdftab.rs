@@ -6,8 +6,6 @@ use std::io;
 use std::process;
 
 use phf::phf_map;
-// NOTE: Regex is extremely slow in Rust; use with caution.
-use regex::Regex;
 use rio_api::model::{Literal, NamedNode, NamedOrBlankNode, Term};
 use rio_api::parser::TriplesParser;
 use rio_xml::{RdfXmlError, RdfXmlParser};
@@ -25,7 +23,7 @@ struct Prefix {
     base: String,
 }
 
-/// Fetch all prefixes via the given connection to the database.
+/// Fetch all prefixes via the given database connection
 fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
     let mut stmt = conn.prepare("SELECT prefix, base FROM prefix ORDER BY length(base) DESC")?;
     let mut rows = stmt.query(params![])?;
@@ -222,14 +220,11 @@ fn compress(
             objs_copy.push(o);
         }
 
-        // TODO: Make this code less ugly:
-        let mut empty_array = SerdeValue::Array(vec![]);
-        let preds_tmp = compressed_subjects.get_mut(&subject);
-        let objs_tmp = match preds_tmp {
-            Some(SerdeValue::Object(m)) => m.get_mut(&predicate),
-            _ => Some(&mut empty_array),
-        };
-        *objs_tmp.unwrap() = SerdeValue::Array(objs_copy);
+        if let Some(SerdeValue::Object(m)) = compressed_subjects.get_mut(&subject) {
+            if let Some(SerdeValue::Array(v)) = m.get_mut(&predicate) {
+                *v = objs_copy;
+            }
+        }
     }
 }
 
@@ -242,9 +237,7 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
         subject_ids.insert(get_cell_contents(row[1].as_ref()));
     }
 
-    eprintln!("Converting subject ids to subjects map ...");
-    let num_subjs = subject_ids.len();
-    for (i, subject_id) in subject_ids.iter().enumerate() {
+    for subject_id in &subject_ids {
         let mut predicates = SerdeMap::new();
         for row in thin_rows.iter() {
             if subject_id.ne(&get_cell_contents(row[1].as_ref())) {
@@ -291,9 +284,6 @@ fn thin_rows_to_subjects(thin_rows: &Vec<Vec<Option<String>>>) -> SerdeMap<Strin
 
         // Add an entry mapping `subject_id` to the predicates map in the subjects map:
         subjects.insert(subject_id.to_owned(), SerdeValue::Object(predicates));
-        if i != 0 && (i % 500) == 0 {
-            eprintln!("Converted {} subject ids out of {} ...", i + 1, num_subjs);
-        }
     }
 
     work_through_dependencies(&mut dependencies, &mut subjects);
@@ -305,7 +295,6 @@ fn work_through_dependencies(
     subjects: &mut SerdeMap<String, SerdeValue>,
 ) {
     // Work through dependencies from leaves to root, nesting the blank structures:
-    eprintln!("Working through dependencies ...");
     while !dependencies.is_empty() {
         let mut leaves: BTreeSet<_> = vec![].into_iter().collect();
         for leaf in subjects.keys() {
@@ -316,37 +305,22 @@ fn work_through_dependencies(
 
         dependencies.clear();
         let mut handled = BTreeSet::new();
-        let num_subjs = subjects.keys().len();
-        for (i, subject_id) in subjects
-            .keys()
-            .map(|s| s.to_owned())
-            .collect::<Vec<_>>()
-            .iter()
-            .enumerate()
-        {
+        for subject_id in &subjects.keys().map(|s| s.to_owned()).collect::<Vec<_>>() {
             let mut predicates: SerdeMap<String, SerdeValue>;
             match subjects.get(subject_id) {
                 Some(SerdeValue::Object(m)) => predicates = m.clone(),
                 _ => predicates = SerdeMap::new(),
             };
 
-            let num_preds = predicates.keys().len();
-            for (j, predicate) in predicates
-                .keys()
-                .map(|s| s.to_owned())
-                .collect::<Vec<_>>()
-                .iter()
-                .enumerate()
-            {
+            for predicate in &predicates.keys().map(|s| s.to_owned()).collect::<Vec<_>>() {
                 let pred_objs: Vec<SerdeValue>;
                 match predicates.get(predicate) {
                     Some(SerdeValue::Array(v)) => pred_objs = v.clone(),
                     _ => pred_objs = vec![],
                 };
 
-                let num_pred_objs = pred_objs.len();
                 let mut objects = vec![];
-                for (k, obj) in pred_objs.iter().enumerate() {
+                for obj in &pred_objs {
                     let mut obj = obj.to_owned();
                     let o: SerdeValue;
                     if let Some(val) = obj.get(&String::from("object")) {
@@ -385,9 +359,6 @@ fn work_through_dependencies(
                         _ => (),
                     }
                     objects.push(obj);
-                    if k != 0 && (k % 100) == 0 {
-                        eprintln!("Converted {} objects ({} total) ...", k + 1, num_pred_objs);
-                    }
                 }
                 objects.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
                 predicates.insert(predicate.to_owned(), SerdeValue::Array(objects));
@@ -395,12 +366,6 @@ fn work_through_dependencies(
                     subject_id.to_owned(),
                     SerdeValue::Object(predicates.to_owned()),
                 );
-                if j != 0 && (j % 100) == 0 {
-                    eprintln!("Converted {} predicates ({} total) ...", j + 1, num_preds);
-                }
-            }
-            if i != 0 && (i % 100) == 0 {
-                eprintln!("Converted {} subject ids ({} total) ...", i + 1, num_subjs);
             }
         }
         for subject_id in &handled {
@@ -411,7 +376,6 @@ fn work_through_dependencies(
 
 fn annotate_reify(subjects: SerdeMap<String, SerdeValue>) -> SerdeMap<String, SerdeValue> {
     // OWL annotation and RDF reification:
-    eprintln!("Generating OWL annotation and RDF reification ...");
     let mut remove: BTreeSet<String> = vec![].into_iter().collect();
     let mut compressed_subjects = SerdeMap::new();
     for subject_id in subjects.keys() {
@@ -524,18 +488,13 @@ fn thick2triples(
     thick_row: &SerdeMap<String, SerdeValue>,
 ) -> Vec<SerdeValue> {
     fn deprefix(prefixes: &Vec<Prefix>, content: &String) -> String {
-        let pattern = Regex::new(r"^([\w\-]+):(.*)");
-        if let Err(_) = pattern {
-            eprintln!("CODING ERROR: invalid regular expression");
-            return content.clone();
-        }
-        let pattern = pattern.unwrap();
-        if let Some(capts) = pattern.captures(content) {
-            if let (Some(prefix), Some(name)) = (capts.get(1), capts.get(2)) {
-                for p in prefixes {
-                    if p.prefix == prefix.as_str() {
-                        return format!("<{}{}>", p.base, name.as_str());
-                    }
+        let v: Vec<&str> = content.split(':').collect();
+        if v.len() == 2 {
+            let prefix = v[0];
+            let name = v[1];
+            for p in prefixes {
+                if p.prefix == prefix {
+                    return format!("<{}{}>", p.base, name);
                 }
             }
         }
@@ -543,24 +502,31 @@ fn thick2triples(
     }
 
     fn create_node(prefixes: &Vec<Prefix>, content: &SerdeValue) -> SerdeValue {
+        fn quote(token: &String) -> String {
+            if token.contains("\n") {
+                let token = {
+                    if let Some(t) = token.strip_prefix("\"").and_then(|s| s.strip_suffix("\"")) {
+                        t
+                    } else {
+                        token
+                    }
+                };
+                return format!("\"\"\"{}\"\"\"", token);
+            } else {
+                return token.to_string();
+            }
+        }
         if let SerdeValue::String(s) = content {
             if s.starts_with("_:") {
                 return content.clone();
             } else if s.starts_with("<") {
                 return content.clone();
             } else if s.starts_with("http") {
-                return SerdeValue::String(format!("\"{}\"", s));
+                return SerdeValue::String(format!("\"\"\"{}\"\"\"", s));
             } else {
                 return SerdeValue::String(deprefix(prefixes, s));
             }
         } else if let SerdeValue::Object(m) = content {
-            fn quote(value: &String) -> String {
-                if value.starts_with("\"") {
-                    return format!("\"\"{}\"\"", value);
-                } else {
-                    return format!("\"\"\"{}\"\"\"", value);
-                }
-            }
             if let (Some(SerdeValue::String(value)), Some(SerdeValue::String(language))) =
                 (m.get("value"), m.get("language"))
             {
@@ -934,18 +900,25 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
         params![],
     )?;
     let filename = format!("file:{}", db);
-    let mut thin_rows: Vec<_> = vec![];
+    let mut thin_rows_by_stanza: BTreeMap<String, Vec<_>> = BTreeMap::new();
     eprintln!("Parsing thin rows ...");
     RdfXmlParser::new(stdin.lock(), filename.as_str())
         .unwrap()
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
+                let mut stanza_rows: Vec<_> = vec![];
                 for mut row in thinify(&mut stack, &mut stanza) {
                     if row.len() != 7 {
                         row.resize_with(7, Default::default);
                     }
-                    thin_rows.push(row);
+                    stanza_rows.push(row);
                 }
+                if let Some(v) = thin_rows_by_stanza.get_mut(&stanza) {
+                    v.append(&mut stanza_rows);
+                } else {
+                    thin_rows_by_stanza.insert(stanza.to_owned(), stanza_rows);
+                }
+
                 // In the current implementation, thinify() will clear the stack as a
                 // side effect, so we make sure to clear it here to get ready for the next stanza:
                 stanza = String::from("");
@@ -996,11 +969,12 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
 
-    eprintln!("Converting thin rows to subjects ...");
-    let subjects = annotate_reify(thin_rows_to_subjects(&thin_rows));
-
-    eprintln!("Converting subjects to thick rows ...");
-    let thick_rows = subjects_to_thick_rows(&subjects);
+    eprintln!("Converting thin rows to thick ...");
+    let mut thick_rows: Vec<_> = vec![];
+    for (_, thin_rows) in thin_rows_by_stanza.iter() {
+        let subjects = annotate_reify(thin_rows_to_subjects(&thin_rows));
+        thick_rows.append(&mut subjects_to_thick_rows(&subjects));
+    }
 
     let rows_to_insert = {
         let mut rows = vec![];
@@ -1026,7 +1000,6 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
     };
 
     eprintln!("Inserting thick rows to db ...");
-
     for row in rows_to_insert {
         let mut stmt = tx
             .prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6)")

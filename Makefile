@@ -7,17 +7,19 @@
 SHEETS = prefix thin
 SHEET_TSVS = $(foreach o,$(SHEETS),build/$(o).tsv)
 ROBOT := java -jar bin/robot.jar
+.DEFAULT_GOAL := round-trip-example
 
 .PHONY: all
 all: build/roundtrip-thin.diff
 
-.PHONY: clean cargoclean clobber
+.PHONY: clean cargoclean
 clean:
 	rm -rf build
 
 cargoclean:
 	cargo clean
 
+.PHONY: clobber
 clobber: clean
 	rm -rf bin
 
@@ -106,10 +108,35 @@ build/sorted-thin.tsv: build/thin.tsv
 build/roundtrip-thin.diff: build/sorted-thin.tsv build/roundtrip-thin.tsv
 	diff $^
 
+build/obi.owl: | build
+	wget https://raw.githubusercontent.com/obi-ontology/obi/v2021-04-06/obi.owl -O $@
+
+build/obi.ttl: build/obi.owl
+	robot convert --input $< --format ttl --output $@
+
+build/obi.rdf: build/obi.ttl
+	rapper -i turtle -o rdfxml-abbrev $< > $@
+
+build/obi_core.db: build/prefix.sql obi_core_no_trailing_ws.owl
+	rm -f $@
+	sqlite3 $@ < $<
+	rdftab $@ < obi_core_no_trailing_ws.owl
+
 build/thick.db: build/prefix.sql target/debug/rdftab
 	rm -f $@
 	sqlite3 $@ < $<
 
-.PHONY: round-trip-example
+.PHONY: round-trip-example round-trip-obi-core round-trip-obi
 round-trip-example: build/thick.db build/thin.rdf target/debug/rdftab round-trip.py
 	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+
+round-trip-obi-core: build/thick.db obi_core_no_trailing_ws.owl target/debug/rdftab round-trip.py
+	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+
+round-trip-obi: build/thick.db obi.rdf target/debug/rdftab round-trip.py
+	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+
+.PHONY: remote-perf
+remote-perf:
+	scp src/main.rs Makefile debian-sandbox:Knocean/rdftab.rs/src/
+	ssh debian-sandbox "cd Knocean/rdftab.rs && cargo build && rm -f build/obi_core.db && sqlite3 build/obi_core.db < build/prefix.sql && time rdftab build/obi_core.db < obi_core_no_trailing_ws.owl"
