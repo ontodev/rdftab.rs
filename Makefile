@@ -7,7 +7,7 @@
 SHEETS = prefix thin
 SHEET_TSVS = $(foreach o,$(SHEETS),build/$(o).tsv)
 ROBOT := java -jar bin/robot.jar
-.DEFAULT_GOAL := round-trip-example
+.DEFAULT_GOAL := rdftab
 
 .PHONY: all
 all: build/roundtrip-thin.diff
@@ -83,13 +83,14 @@ build/thin.owl: build/thin.ttl | bin/robot.jar
 build/thin.rdf: build/thin.ttl
 	rapper -i turtle -o rdfxml-abbrev $< > $@
 
+rdftab: target/release/rdftab
+	rm -f $@
+	ln -s $<
+
 target/release/rdftab: src/main.rs
 	cargo build --release
 
-target/debug/rdftab: src/main.rs
-	cargo build
-
-build/roundtrip-thin.db: target/debug/rdftab build/prefix.sql build/thin.rdf
+build/roundtrip-thin.db: rdftab build/prefix.sql build/thin.rdf
 	rm -f $@
 	sqlite3 $@ < $(word 2,$^)
 	$< $@ < $(word 3,$^)
@@ -117,26 +118,39 @@ build/obi.ttl: build/obi.owl
 build/obi.rdf: build/obi.ttl
 	rapper -i turtle -o rdfxml-abbrev $< > $@
 
-build/obi_core.db: build/prefix.sql obi_core_no_trailing_ws.owl
+build/obi_core.db: build/prefix.sql obi_core.owl rdftab
 	rm -f $@
 	sqlite3 $@ < $<
-	rdftab $@ < obi_core_no_trailing_ws.owl
+	$(word 3,$^) $@ < obi_core.owl
 
-build/thick.db: build/prefix.sql target/debug/rdftab
+build/thick.db: build/prefix.sql
 	rm -f $@
 	sqlite3 $@ < $<
+
+build/obi-full-round-trip.ttl: build/thick.db obi.rdf rdftab
+	$(word 3,$^) -r $< < $(word 2,$^) > $@
+
+build/obi-core-round-trip.ttl: build/thick.db obi_core.owl rdftab
+	$(word 3,$^) -r $< < $(word 2,$^) > $@
 
 .PHONY: round-trip-example round-trip-obi-core round-trip-obi
-round-trip-example: build/thick.db build/thin.rdf target/debug/rdftab round-trip.py
-	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+round-trip-example: build/thick.db build/thin.rdf rdftab round-trip.py
+	@echo "`date` Running example round trip ..."
+	$(word 3,$^) -r $< < $(word 2,$^) > triples.ttl
+	@echo "`date` Triples have been generated"
+	$(word 4,$^) $(word 2,$^) < triples.ttl
+	@echo "`date` Done!"
 
-round-trip-obi-core: build/thick.db obi_core_no_trailing_ws.owl target/debug/rdftab round-trip.py
-	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
+round-trip-obi-core: build/thick.db obi_core.owl rdftab round-trip.py
+	@echo "`date` Running obi core round trip ..."
+	$(word 3,$^) -r $< < $(word 2,$^) > triples.ttl
+	@echo "`date` Triples have been generated"
+	$(word 4,$^) $(word 2,$^) < triples.ttl
+	@echo "`date` Done!"
 
-round-trip-obi: build/thick.db obi.rdf target/debug/rdftab round-trip.py
-	rdftab -r $< < $(word 2,$^) | round-trip.py $(word 2,$^)
-
-.PHONY: remote-perf
-remote-perf:
-	scp src/main.rs Makefile debian-sandbox:Knocean/rdftab.rs/src/
-	ssh debian-sandbox "cd Knocean/rdftab.rs && cargo build && rm -f build/obi_core.db && sqlite3 build/obi_core.db < build/prefix.sql && time rdftab build/obi_core.db < obi_core_no_trailing_ws.owl"
+round-trip-obi: build/thick.db obi.rdf rdftab round-trip.py
+	@echo "`date` Running obi round trip ..."
+	$(word 3,$^) -r $< < $(word 2,$^) > triples.ttl
+	@echo "`date` Triples have been generated"
+	$(word 4,$^) $(word 2,$^) < triples.ttl
+	@echo "`date` Done!"

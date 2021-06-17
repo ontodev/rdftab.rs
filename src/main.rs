@@ -5,6 +5,7 @@ use std::error::Error;
 use std::io;
 use std::process;
 
+use oxiri::Iri;
 use phf::phf_map;
 use rio_api::model::{Literal, NamedNode, NamedOrBlankNode, Term};
 use rio_api::parser::TriplesParser;
@@ -23,7 +24,7 @@ struct Prefix {
     base: String,
 }
 
-/// Fetch all prefixes via the given database connection
+/// Fetch all prefixes from the database via the given database connection
 fn get_prefixes(conn: &mut Connection) -> Result<Vec<Prefix>> {
     let mut stmt = conn.prepare("SELECT prefix, base FROM prefix ORDER BY length(base) DESC")?;
     let mut rows = stmt.query(params![])?;
@@ -103,8 +104,7 @@ fn row2object_map(row: &Vec<Option<String>>) -> SerdeValue {
 /// Given a SerdeMap mapping strings to SerdeValues, and a specific predicate represented by a
 /// string slice, return a SerdeValue representing the first object contained in the predicates map.
 fn first_object(predicates: &SerdeMap<String, SerdeValue>, predicate: &str) -> SerdeValue {
-    let objs = predicates.get(predicate);
-    match objs {
+    match predicates.get(predicate) {
         None => (),
         Some(objs) => match objs {
             SerdeValue::Array(v) => {
@@ -902,8 +902,7 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
     let filename = format!("file:{}", db);
     let mut thin_rows_by_stanza: BTreeMap<String, Vec<_>> = BTreeMap::new();
     eprintln!("Parsing thin rows ...");
-    RdfXmlParser::new(stdin.lock(), filename.as_str())
-        .unwrap()
+    RdfXmlParser::new(stdin.lock(), Some(Iri::parse(filename.to_owned()).unwrap()))
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
                 let mut stanza_rows: Vec<_> = vec![];
