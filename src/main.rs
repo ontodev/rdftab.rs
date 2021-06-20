@@ -205,17 +205,31 @@ fn compress(
             };
 
             if o_obj == obj || o_val == obj {
-                let new_preds = match compressed_subjects.get(subject_id) {
-                    Some(p) => p.clone(),
-                    None => SerdeValue::Object(SerdeMap::new()),
-                };
-                let mut m = match o {
-                    SerdeValue::Object(m) => m.clone(),
-                    _ => SerdeMap::new(),
-                };
-                m.insert(kind.to_string(), new_preds);
-                o = SerdeValue::Object(m);
-                remove.insert(subject_id.to_string());
+                if let Some(SerdeValue::Object(items)) = compressed_subjects.get(subject_id) {
+                    let mut annotations;
+                    match o.get(kind) {
+                        Some(SerdeValue::Object(m)) => annotations = m.clone(),
+                        _ => annotations = SerdeMap::new(),
+                    };
+                    for (key, val) in items.iter() {
+                        let mut annotations_for_key;
+                        match annotations.get(key) {
+                            Some(SerdeValue::Array(v)) => annotations_for_key = v.clone(),
+                            _ => annotations_for_key = vec![],
+                        };
+                        if let SerdeValue::Array(v) = val {
+                            for w in v {
+                                annotations_for_key.push(w.clone());
+                            }
+                        }
+                        annotations.insert(key.to_string(), SerdeValue::Array(annotations_for_key));
+                    }
+                    if let SerdeValue::Object(mut m) = o.clone() {
+                        m.insert(kind.to_string(), SerdeValue::Object(annotations));
+                        o = SerdeValue::Object(m);
+                        remove.insert(subject_id.to_string());
+                    }
+                }
             }
             objs_copy.push(o);
         }
@@ -498,7 +512,11 @@ fn thick2triples(
                 }
             }
         }
-        return format!("\"\"\"{}\"\"\"", content.clone());
+        if content.contains("^^") || content.contains("@") {
+            return content.clone();
+        } else {
+            return format!("\"\"\"{}\"\"\"", content.clone());
+        }
     }
 
     fn create_node(prefixes: &Vec<Prefix>, content: &SerdeValue) -> SerdeValue {

@@ -21,11 +21,10 @@ def compare_graphs(actual, expected, show_diff=False, sort=False):
     actual_iso = to_isomorphic(actual)
     expected_iso = to_isomorphic(expected)
 
-    print("Comparing graphs ...", file=sys.stderr)
+    print("Comparing graphs ...")
     if actual_iso != expected_iso:
         print(
-            "Graphs are not identical. Saving graphs to the build/ directory ...", file=sys.stderr
-        )
+            "Graphs are not identical. Saving graphs to the build/ directory ...")
         # Dump the complete graph contents to two files:
         with open("build/expected.ttl", "w") as fh:
             print(expected.serialize(format="n3").decode("utf-8"), file=fh)
@@ -33,18 +32,16 @@ def compare_graphs(actual, expected, show_diff=False, sort=False):
             print(actual.serialize(format="n3").decode("utf-8"), file=fh)
         print(
             "Complete dumps of the actual and expected graphs can be "
-            "found in build/actual.ttl and build/expected.ttl",
-            file=sys.stderr,
-        )
+            "found in build/actual.ttl and build/expected.ttl")
         if show_diff:
-            print("Computing differences ...", file=sys.stderr)
+            print("Computing differences ...")
             _, in_first, in_second = graph_diff(actual_iso, expected_iso)
             print("----- Contents of actual graph not in expected graph -----")
             dump_ttl(in_first, sort)
             print("----- Contents of expected graph not in actual graph -----")
             dump_ttl(in_second, sort)
     else:
-        print("Graphs are identical.", file=sys.stderr)
+        print("Graphs are identical.")
 
 
 if __name__ == "__main__":
@@ -60,5 +57,8 @@ if __name__ == "__main__":
     actual = Graph()
     actual.parse(data="".join(sys.stdin.readlines()), format="ttl")
     expected = Graph()
-    expected.parse(args.REF)
+    if args.REF.name.endswith(".ttl"):
+        expected.parse(args.REF, format="ttl")
+    else:
+        expected.parse(args.REF)
     compare_graphs(actual, expected, True)

@@ -7,7 +7,6 @@ edition = "2018"
 [dependencies]
 oxiri = "0.1.1"
 phf = { version = "0.8", features = ["macros"] }
-regex = "1.5"
 
 # TODO: Change to 0.5.3 and remove the hard-coded reference to ontodev's fork of rio, using
 # the patch.crates-io directive that is commented out below instead.
