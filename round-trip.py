@@ -23,8 +23,7 @@ def compare_graphs(actual, expected, show_diff=False, sort=False):
 
     print("Comparing graphs ...")
     if actual_iso != expected_iso:
-        print(
-            "Graphs are not identical. Saving graphs to the build/ directory ...")
+        print("Graphs are not identical. Saving graphs to the build/ directory ...")
         # Dump the complete graph contents to two files:
         with open("build/expected.ttl", "w") as fh:
             print(expected.serialize(format="n3").decode("utf-8"), file=fh)
@@ -32,7 +31,8 @@ def compare_graphs(actual, expected, show_diff=False, sort=False):
             print(actual.serialize(format="n3").decode("utf-8"), file=fh)
         print(
             "Complete dumps of the actual and expected graphs can be "
-            "found in build/actual.ttl and build/expected.ttl")
+            "found in build/actual.ttl and build/expected.ttl"
+        )
         if show_diff:
             print("Computing differences ...")
             _, in_first, in_second = graph_diff(actual_iso, expected_iso)

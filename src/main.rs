@@ -228,6 +228,8 @@ fn compress(
                         m.insert(kind.to_string(), SerdeValue::Object(annotations));
                         o = SerdeValue::Object(m);
                         remove.insert(subject_id.to_string());
+                    } else {
+                        eprintln!("WARNING: {} is not a map.", o);
                     }
                 }
             }
