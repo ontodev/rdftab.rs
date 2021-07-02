@@ -148,9 +148,9 @@ round-trip-obi-core: build/thick.db obi_core.owl rdftab round-trip.py
 	$(word 4,$^) $(word 2,$^) < triples.ttl
 	@echo "`date` Done!"
 
-round-trip-obi: build/thick.db obi.rdf rdftab round-trip.py obi_bfo_0000027.ttl
+round-trip-obi: build/thick.db obi.rdf rdftab round-trip.py
 	@echo "`date` Running obi round trip ..."
 	$(word 3,$^) -r $< < $(word 2,$^) > triples.ttl
 	@echo "`date` Triples have been generated"
-	$(word 4,$^) $(word 5,$^) < triples.ttl
+	$(word 4,$^) $(word 2,$^) < triples.ttl
 	@echo "`date` Done!"

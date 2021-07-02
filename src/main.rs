@@ -54,13 +54,33 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
 fn thinify(
     stanza_stack: &Vec<Vec<Option<String>>>,
     stanza_name: &String,
+    last_stanza_name: &String,
 ) -> Vec<Vec<Option<String>>> {
     let mut rows = vec![];
     let mut stanza_name = stanza_name.to_string();
+
+    // First, look through the stack to collect any annotated or reified subjects:
+    let mut annotated_or_reified: BTreeSet<_> = vec![].into_iter().collect();
+    for row in stanza_stack.iter() {
+        if let (Some(s), Some(t)) = (row[0].as_ref(), row[1].as_ref()) {
+            if t == "rdf:subject" || t == "owl:annotatedSource" {
+                annotated_or_reified.insert(s.to_string());
+            }
+        }
+    }
+
     for s in stanza_stack.iter() {
         if stanza_name == "" {
-            if let Some(ref sb) = s[1] {
+            if let Some(ref sb) = s[0] {
                 stanza_name = sb.clone();
+                // Check to see if the new stanza name has associated annotation or
+                // reification info; if so revert to the previous stanza name instead:
+                match annotated_or_reified.get(&stanza_name) {
+                    Some(t) if t != "" => {
+                        stanza_name = last_stanza_name.to_string();
+                    }
+                    _ => (),
+                };
             }
         }
         let mut v = vec![Some(stanza_name.to_string())];
@@ -904,6 +924,7 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let mut stack: Vec<Vec<Option<String>>> = Vec::new();
     let mut stanza = String::from("");
+    let mut last_stanza = String::from("");
     let mut conn = Connection::open(db)?;
     let prefixes = get_prefixes(&mut conn).expect("Get prefixes");
 
@@ -926,7 +947,7 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
                 let mut stanza_rows: Vec<_> = vec![];
-                for mut row in thinify(&mut stack, &mut stanza) {
+                for mut row in thinify(&stack, &stanza, &last_stanza) {
                     if row.len() != 7 {
                         row.resize_with(7, Default::default);
                     }
@@ -941,6 +962,7 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
                 // In the current implementation, thinify() will clear the stack as a
                 // side effect, so we make sure to clear it here to get ready for the next stanza:
                 stanza = String::from("");
+                last_stanza = stanza.clone();
                 stack.clear()
             } else {
                 let subject = match t.subject {
