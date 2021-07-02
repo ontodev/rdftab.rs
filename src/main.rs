@@ -59,7 +59,7 @@ fn thinify(
     let mut stanza_name = stanza_name.to_string();
     for s in stanza_stack.iter() {
         if stanza_name == "" {
-            if let Some(ref sb) = s[1] {
+            if let Some(ref sb) = s[0] {
                 stanza_name = sb.clone();
             }
         }
@@ -926,7 +926,7 @@ fn insert(db: &String, round_trip: bool) -> Result<(), Box<dyn Error>> {
         .parse_all(&mut |t| {
             if t.subject == stanza_end {
                 let mut stanza_rows: Vec<_> = vec![];
-                for mut row in thinify(&mut stack, &mut stanza) {
+                for mut row in thinify(&stack, &stanza) {
                     if row.len() != 7 {
                         row.resize_with(7, Default::default);
                     }
