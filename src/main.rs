@@ -1,4 +1,5 @@
 // Based on https://docs.rs/csv/1.1.3/csv/tutorial/index.html
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::env;
 use std::io;
@@ -41,6 +42,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let mut stack: Vec<Vec<Option<String>>> = Vec::new();
     let mut stanza = String::from("");
+    let mut last_stanza = String::from("");
     let mut conn = Connection::open(db)?;
     let prefixes = get_prefixes(&mut conn).expect("Get prefixes");
     let tx = conn.transaction()?;
@@ -56,11 +58,24 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let filename = format!("file:{}", db);
     RdfXmlParser::new(stdin.lock(), filename.as_str()).unwrap().parse_all(&mut |t| {
         if t.subject == stanza_end {
+            let mut annotated_or_reified: BTreeSet<_> = vec![].into_iter().collect();
+            for row in stack.iter() {
+                if let (Some(s), Some(t)) = (row[0].as_ref(), row[1].as_ref()) {
+                    if t == "rdf:subject" || t == "owl:annotatedSource" {
+                        annotated_or_reified.insert(s.to_string());
+                    }
+                }
+            }
             while stack.len() > 0 {
                 if let Some(s) = stack.pop() {
                     if stanza == "" {
                         if let Some(ref sb) = s[0] {
                             stanza = sb.clone();
+                            if let Some(t) = annotated_or_reified.get(&stanza) {
+                                if last_stanza != "" {
+                                    stanza = last_stanza.to_string();
+                                }
+                            }
                         }
                     }
                     let mut v = vec![Some(stanza.to_string())];
@@ -69,7 +84,8 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                     stmt.execute(v).expect("Insert row");
                 }
             }
-            stanza = String::from("")
+            last_stanza = stanza.clone();
+            stanza = String::from("");
         } else {
             let subject = match t.subject {
                 NamedOrBlankNode::NamedNode(node) => Some(shorten(&prefixes, node.iri)),
