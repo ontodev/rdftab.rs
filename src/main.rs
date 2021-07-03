@@ -58,6 +58,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let filename = format!("file:{}", db);
     RdfXmlParser::new(stdin.lock(), filename.as_str()).unwrap().parse_all(&mut |t| {
         if t.subject == stanza_end {
+            // Look through the stack to collect any annotated or reified subjects:
             let mut annotated_or_reified: BTreeSet<_> = vec![].into_iter().collect();
             for row in stack.iter() {
                 if let (Some(s), Some(t)) = (row[0].as_ref(), row[1].as_ref()) {
@@ -71,11 +72,14 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                     if stanza == "" {
                         if let Some(ref sb) = s[0] {
                             stanza = sb.clone();
-                            if let Some(t) = annotated_or_reified.get(&stanza) {
-                                if last_stanza != "" {
+                            // Check to see if the new stanza name has associated annotation or
+                            // reification info; if so revert to the previous stanza name instead:
+                            match annotated_or_reified.get(&stanza) {
+                                Some(t) if t != "" => {
                                     stanza = last_stanza.to_string();
-                                }
-                            }
+                                },
+                                _ => (),
+                            };
                         }
                     }
                     let mut v = vec![Some(stanza.to_string())];
