@@ -59,7 +59,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
             while stack.len() > 0 {
                 if let Some(s) = stack.pop() {
                     if stanza == "" {
-                        if let Some(ref sb) = s[1] {
+                        if let Some(ref sb) = s[0] {
                             stanza = sb.clone();
                         }
                     }
