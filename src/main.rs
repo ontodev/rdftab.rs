@@ -1,5 +1,4 @@
 // Based on https://docs.rs/csv/1.1.3/csv/tutorial/index.html
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::env;
 use std::io;
@@ -39,10 +38,10 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let stanza_end = NamedOrBlankNode::from(NamedNode { iri: "http://example.com/stanza-end" }).into();
     let annotated_source = NamedNode { iri: "http://www.w3.org/2002/07/owl#annotatedSource" };
+    let reified_source = NamedNode { iri: "http://www.w3.org/1999/02/22-rdf-syntax-ns#subject" };
     let stdin = io::stdin();
     let mut stack: Vec<Vec<Option<String>>> = Vec::new();
     let mut stanza = String::from("");
-    let mut last_stanza = String::from("");
     let mut conn = Connection::open(db)?;
     let prefixes = get_prefixes(&mut conn).expect("Get prefixes");
     let tx = conn.transaction()?;
@@ -58,38 +57,21 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let filename = format!("file:{}", db);
     RdfXmlParser::new(stdin.lock(), filename.as_str()).unwrap().parse_all(&mut |t| {
         if t.subject == stanza_end {
-            // Look through the stack to collect any annotated or reified subjects:
-            let mut annotated_or_reified: BTreeSet<_> = vec![].into_iter().collect();
-            for row in stack.iter() {
-                if let (Some(s), Some(t)) = (row[0].as_ref(), row[1].as_ref()) {
-                    if t == "rdf:subject" || t == "owl:annotatedSource" {
-                        annotated_or_reified.insert(s.to_string());
-                    }
-                }
-            }
             while stack.len() > 0 {
                 if let Some(s) = stack.pop() {
                     if stanza == "" {
                         if let Some(ref sb) = s[0] {
                             stanza = sb.clone();
-                            // Check to see if the new stanza name has associated annotation or
-                            // reification info; if so revert to the previous stanza name instead:
-                            match annotated_or_reified.get(&stanza) {
-                                Some(t) if t != "" => {
-                                    stanza = last_stanza.to_string();
-                                },
-                                _ => (),
-                            };
                         }
                     }
                     let mut v = vec![Some(stanza.to_string())];
                     v.extend_from_slice(&s);
                     let mut stmt = tx.prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6, ?7)").expect("Statement ok");
+                    eprintln!("{:?}", v);
                     stmt.execute(v).expect("Insert row");
                 }
             }
-            last_stanza = stanza.clone();
-            stanza = String::from("");
+            stanza = String::from("")
         } else {
             let subject = match t.subject {
                 NamedOrBlankNode::NamedNode(node) => Some(shorten(&prefixes, node.iri)),
@@ -111,7 +93,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                 NamedOrBlankNode::NamedNode(node) => { stanza = shorten(&prefixes, node.iri); }
                 _ => { }
             }
-            if stanza == "" && t.predicate == annotated_source {
+            if stanza == "" && (t.predicate == annotated_source || t.predicate == reified_source) {
                 match t.object {
                     Term::NamedNode(node) => { stanza = shorten(&prefixes, node.iri); },
                     _ => { }
