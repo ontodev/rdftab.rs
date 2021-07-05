@@ -38,6 +38,7 @@ fn shorten(prefixes: &Vec<Prefix>, iri: &str) -> String {
 fn insert(db: &String) -> Result<(), Box<dyn Error>> {
     let stanza_end = NamedOrBlankNode::from(NamedNode { iri: "http://example.com/stanza-end" }).into();
     let annotated_source = NamedNode { iri: "http://www.w3.org/2002/07/owl#annotatedSource" };
+    let reified_source = NamedNode { iri: "http://www.w3.org/1999/02/22-rdf-syntax-ns#subject" };
     let stdin = io::stdin();
     let mut stack: Vec<Vec<Option<String>>> = Vec::new();
     let mut stanza = String::from("");
@@ -59,7 +60,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
             while stack.len() > 0 {
                 if let Some(s) = stack.pop() {
                     if stanza == "" {
-                        if let Some(ref sb) = s[1] {
+                        if let Some(ref sb) = s[0] {
                             stanza = sb.clone();
                         }
                     }
@@ -91,7 +92,7 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                 NamedOrBlankNode::NamedNode(node) => { stanza = shorten(&prefixes, node.iri); }
                 _ => { }
             }
-            if stanza == "" && t.predicate == annotated_source {
+            if stanza == "" && (t.predicate == annotated_source || t.predicate == reified_source) {
                 match t.object {
                     Term::NamedNode(node) => { stanza = shorten(&prefixes, node.iri); },
                     _ => { }
