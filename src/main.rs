@@ -67,7 +67,6 @@ fn insert(db: &String) -> Result<(), Box<dyn Error>> {
                     let mut v = vec![Some(stanza.to_string())];
                     v.extend_from_slice(&s);
                     let mut stmt = tx.prepare_cached("INSERT INTO statements values (?1, ?2, ?3, ?4, ?5, ?6, ?7)").expect("Statement ok");
-                    eprintln!("{:?}", v);
                     stmt.execute(v).expect("Insert row");
                 }
             }
