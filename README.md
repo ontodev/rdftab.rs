@@ -367,3 +367,14 @@ owl:disjointWith|_:riog00000011|owl:onProperty|ex:develops-from|||
 owl:disjointWith|_:riog00000011|rdf:type|owl:Restriction|||
 
 In this case, to fetch all axioms for class ex:a or ex:B we need to iteratively query to walk up the graph
+
+
+## Installation
+### MacOS
+1. Download `rdftab-x86_64-apple-darwin` from the [latest release](https://github.com/ontodev/rdftab.rs/releases/latest).
+2. Run:
+```
+mv path/to/rdftab-x86_64-apple-darwin /usr/local/bin/rdftab
+chmod 777 /usr/local/bin/rdftab
+```
+3. If prompted by MacOS, [allow permissions](https://support.apple.com/en-us/HT202491).
