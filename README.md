@@ -37,6 +37,12 @@ $ sqlite3 example.db
 > select * from statements limit 3;
 ```
 
+If macOS complains about running untrusted code
+(due to [Gatekeeper](https://en.wikipedia.org/wiki/Gatekeeper_(macOS)) code signing,
+see [allow permissions](https://support.apple.com/en-us/HT202491)),
+try [`sudo spctl --add rdftab`](https://osxdaily.com/2015/07/15/add-remove-gatekeeper-app-command-line-mac-os-x/).
+
+
 ## Build
 
 If we haven't provided a binary for your platform,
@@ -366,4 +372,4 @@ owl:disjointWith|_:riog00000012|rdf:type|owl:Restriction|||
 owl:disjointWith|_:riog00000011|owl:onProperty|ex:develops-from|||
 owl:disjointWith|_:riog00000011|rdf:type|owl:Restriction|||
 
-In this case, to fetch all axioms for class ex:a or ex:B we need to iteratively query to walk up the graph
+In this case, to fetch all axioms for class ex:a or ex:B we need to iteratively query to walk up the graph.
